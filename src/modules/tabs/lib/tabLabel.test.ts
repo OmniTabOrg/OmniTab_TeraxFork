@@ -15,8 +15,8 @@ function terminalTab(over: Partial<TerminalTab> = {}): TerminalTab {
 
 describe("labelFor (terminal tabs)", () => {
   it("derives the label from the last cwd segment", () => {
-    expect(labelFor(terminalTab({ cwd: "/Users/me/projects/omnitab-ai" }))).toBe(
-      "omnitab-ai",
+    expect(labelFor(terminalTab({ cwd: "/Users/me/projects/omnitab" }))).toBe(
+      "omnitab",
     );
   });
 
@@ -26,7 +26,7 @@ describe("labelFor (terminal tabs)", () => {
 
   it("prefers a custom title over the cwd-derived name", () => {
     expect(
-      labelFor(terminalTab({ cwd: "/Users/me/projects/omnitab-ai", customTitle: "Server" })),
+      labelFor(terminalTab({ cwd: "/Users/me/projects/omnitab", customTitle: "Server" })),
     ).toBe("Server");
   });
 

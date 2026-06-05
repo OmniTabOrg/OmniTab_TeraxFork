@@ -5,7 +5,7 @@
   <p><strong>Lightweight Terminal-first AI-native dev workspace.</strong></p>
 
   <p>
-    <img src="https://img.shields.io/github/v/release/crynta/omnitab-ai?label=version&color=blue" alt="version" />
+    <img src="https://img.shields.io/github/v/release/Almyyyy/OmniTab_TeraxFork?label=version&color=blue" alt="version" />
     <img src="https://img.shields.io/badge/license-Apache--2.0-green" alt="license" />
     <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey" alt="platform" />
   </p>
@@ -15,7 +15,7 @@
     ·
     <a href="https://omnitab.app/docs">Docs</a>
     ·
-    <a href="https://github.com/crynta/OmniTab-website">Website's source code</a>
+    <a href="https://github.com/Almyyyy/OmniTab_TeraxFork">Website's source code</a>
   </p>
 </div>
 
@@ -23,19 +23,19 @@
 
 OmniTab is a lightweight open-source terminal (ADE) built on Tauri 2 + Rust and React 19. A native PTY backend with a WebGL renderer, an agentic AI side-panel that runs against your own keys or fully local models, plus a code editor, file explorer, source control with a git graph, and browser tabs built in. About 7-8 MB on disk. No telemetry. No account.
 
-## Screenshots
+## Features
 
 <table>
   <tr>
-    <td align="center"><img src="docs/terminal.png" alt="Terminal" /><br/><sub>Multi-tab terminal with WebGL rendering</sub></td>
-    <td align="center"><img src="docs/themes.png" alt="Themes and background image" /><br/><sub>Custom themes, presets, and background images</sub></td>
+    <td align="center"><sub>Multi-tab terminal with WebGL rendering</sub></td>
+    <td align="center"><sub>Custom themes, presets, and background images</sub></td>
   </tr>
   <tr>
-    <td align="center"><img src="docs/web-preview.png" alt="Browser tab" /><br/><sub>Browser tab for local dev servers and external URLs</sub></td>
-    <td align="center"><img src="docs/source-control.png" alt="Source control and git graph" /><br/><sub>Source control panel with git graph in history</sub></td>
+    <td align="center"><sub>Browser tab for local dev servers and external URLs</sub></td>
+    <td align="center"><sub>Source control panel with git graph in history</sub></td>
   </tr>
   <tr>
-    <td colspan="2" align="center"><img src="docs/ai-workflow.png" alt="AI window" /><br/><sub>Agentic AI workflow with edit diffs in the code editor</sub></td>
+    <td colspan="2" align="center"><sub>Agentic AI workflow with edit diffs in the code editor</sub></td>
   </tr>
 </table>
 
@@ -93,7 +93,7 @@ OmniTab is a lightweight open-source terminal (ADE) built on Tauri 2 + Rust and 
 
 ## Install
 
-Latest installers are on the [Releases](https://github.com/crynta/omnitab-ai/releases/latest) page. OmniTab auto-updates from there.
+Latest installers are on the [Releases](https://github.com/Almyyyy/OmniTab_TeraxFork/releases/latest) page. OmniTab auto-updates from there.
 
 ### Windows notes
 
@@ -137,10 +137,6 @@ cd src-tauri && cargo test --locked                               # Rust tests
 
 Tauri 2, Rust, `portable-pty`, React 19, TypeScript, Vite, xterm.js, CodeMirror 6, Vercel AI SDK v6, Tailwind v4, shadcn/ui, Zustand.
 
-## Contributing
-
-Issues and PRs are welcome! Feel free to open issues, suggest features, or submit pull requests. See [CONTRIBUTING.md](CONTRIBUTING.md) for more details.
-
 ## License
 
 OmniTab is licensed under the Apache-2.0 License. For more information on our dependencies, see [Apache License 2.0](LICENSE).
@@ -148,11 +144,11 @@ OmniTab is licensed under the Apache-2.0 License. For more information on our de
 ## Star history
 
 <div align="center">
-  <a href="https://www.star-history.com/#crynta/omnitab-ai&Date">
+  <a href="https://www.star-history.com/#Almyyyy/OmniTab_TeraxFork&Date">
     <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=crynta/omnitab-ai&type=Date&theme=dark" />
-      <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=crynta/omnitab-ai&type=Date" />
-      <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=crynta/omnitab-ai&type=Date" />
+      <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=Almyyyy/OmniTab_TeraxFork&type=Date&theme=dark" />
+      <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=Almyyyy/OmniTab_TeraxFork&type=Date" />
+      <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=Almyyyy/OmniTab_TeraxFork&type=Date" />
     </picture>
   </a>
 </div>

@@ -8,7 +8,7 @@ export type SessionMeta = {
   updatedAt: number;
 };
 
-const STORE_PATH = "omnitab-ai-sessions.json";
+const STORE_PATH = "omnitab-sessions.json";
 const KEY_SESSIONS = "sessions";
 const KEY_ACTIVE = "activeId";
 const messagesKey = (id: string) => `messages:${id}`;

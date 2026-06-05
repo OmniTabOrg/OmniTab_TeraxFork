@@ -9,7 +9,7 @@ export type Todo = {
   status: TodoStatus;
 };
 
-const STORE_PATH = "omnitab-ai-todos.json";
+const STORE_PATH = "omnitab-todos.json";
 const todosKey = (sessionId: string) => `todos:${sessionId}`;
 
 const store = new LazyStore(STORE_PATH, { defaults: {}, autoSave: 200 });

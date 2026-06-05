@@ -1,4 +1,4 @@
-export const KEYRING_SERVICE = "omnitab-ai";
+export const KEYRING_SERVICE = "omnitab";
 
 export type ProviderId =
   | "openai"
