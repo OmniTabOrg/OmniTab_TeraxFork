@@ -23,7 +23,14 @@ import {
   SidebarLeftIcon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { useEffect, useRef, useState } from "react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type PointerEvent,
+} from "react";
 
 type Props = {
   tabs: Tab[];
@@ -85,6 +92,24 @@ export function Header({
   const [compact, setCompact] = useState(false);
   const userShortcuts = usePreferencesStore((s) => s.shortcuts);
 
+  const startWindowDrag = useCallback(
+    (e: PointerEvent<HTMLElement>) => {
+      if (tabDragActive || e.button !== 0) return;
+      const target = e.target as HTMLElement | null;
+      if (
+        target?.closest(
+          "button, input, textarea, select, a, [role='tab'], [data-tab-id]",
+        )
+      ) {
+        return;
+      }
+      void getCurrentWindow().startDragging().catch((err) => {
+        console.warn("[omnitab] window drag failed:", err);
+      });
+    },
+    [tabDragActive],
+  );
+
   const tokensFor = (id: ShortcutId): string => {
     const s = SHORTCUTS.find((s) => s.id === id);
     if (!s) return "";
@@ -129,6 +154,7 @@ export function Header({
       {IS_MAC && !tabDragActive && (
         <div
           data-tauri-drag-region
+          onPointerDown={startWindowDrag}
           className="absolute inset-y-0 left-0 w-20"
         />
       )}
@@ -199,8 +225,9 @@ export function Header({
       {IS_MAC && <span className="mr-1 h-full w-px shrink-0 bg-border" />}
 
       <div
-        className="flex min-w-0 flex-1 items-center gap-2"
+        className="flex h-full min-w-0 flex-1 items-center gap-2"
         data-omnitab-tab-drop-zone
+        onPointerDown={startWindowDrag}
       >
         <TabBar
           tabs={tabs}
