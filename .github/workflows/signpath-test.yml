@@ -9,7 +9,7 @@ concurrency:
 
 jobs:
   test-sign-windows:
-    if: github.repository == 'Almyyyy/OmniTab_TeraxFork'
+    if: github.repository == 'OmniTabOrg/OmniTab_TeraxFork'
     runs-on: windows-latest
     permissions:
       contents: read

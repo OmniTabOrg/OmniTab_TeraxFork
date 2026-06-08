@@ -5,7 +5,7 @@
   <p><strong>Lightweight Terminal-first AI-native dev workspace.</strong></p>
 
   <p>
-    <img src="https://img.shields.io/github/v/release/Almyyyy/OmniTab_TeraxFork?label=version&color=blue" alt="version" />
+    <img src="https://img.shields.io/github/v/release/OmniTabOrg/OmniTab_TeraxFork?label=version&color=blue" alt="version" />
     <img src="https://img.shields.io/badge/license-Apache--2.0-green" alt="license" />
     <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey" alt="platform" />
   </p>
@@ -15,7 +15,7 @@
     ·
     <a href="https://omnitab.app/docs">Docs</a>
     ·
-    <a href="https://github.com/Almyyyy/OmniTab_TeraxFork">Website's source code</a>
+    <a href="https://github.com/OmniTabOrg/OmniTab_TeraxFork">Website's source code</a>
   </p>
 </div>
 
@@ -93,7 +93,7 @@ OmniTab is a lightweight open-source terminal (ADE) built on Tauri 2 + Rust and 
 
 ## Install
 
-Latest installers are on the [Releases](https://github.com/Almyyyy/OmniTab_TeraxFork/releases/latest) page. OmniTab auto-updates from there.
+Latest installers are on the [Releases](https://github.com/OmniTabOrg/OmniTab_TeraxFork/releases/latest) page. OmniTab auto-updates from there.
 
 ### Windows notes
 
@@ -144,11 +144,11 @@ OmniTab is licensed under the Apache-2.0 License. For more information on our de
 ## Star history
 
 <div align="center">
-  <a href="https://www.star-history.com/#Almyyyy/OmniTab_TeraxFork&Date">
+  <a href="https://www.star-history.com/#OmniTabOrg/OmniTab_TeraxFork&Date">
     <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=Almyyyy/OmniTab_TeraxFork&type=Date&theme=dark" />
-      <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=Almyyyy/OmniTab_TeraxFork&type=Date" />
-      <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=Almyyyy/OmniTab_TeraxFork&type=Date" />
+      <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=OmniTabOrg/OmniTab_TeraxFork&type=Date&theme=dark" />
+      <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=OmniTabOrg/OmniTab_TeraxFork&type=Date" />
+      <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=OmniTabOrg/OmniTab_TeraxFork&type=Date" />
     </picture>
   </a>
 </div>
