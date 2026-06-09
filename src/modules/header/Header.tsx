@@ -45,6 +45,10 @@ type Props = {
   /** Set a terminal tab's custom label; empty string resets to default. */
   onRename: (id: number, title: string) => void;
   onTabDragStart?: (id: number) => string | null;
+  onTabDragMove?: (
+    raw: string,
+    target: { targetId: number | null; edge: "before" | "after" } | null,
+  ) => boolean | void;
   onTabDragEnd?: (raw: string, detached: boolean) => void;
   tabDragActive?: boolean;
   externalTabDragHover?: {
@@ -78,6 +82,7 @@ export function Header({
   onPin,
   onRename,
   onTabDragStart,
+  onTabDragMove,
   onTabDragEnd,
   tabDragActive,
   externalTabDragHover,
@@ -103,9 +108,11 @@ export function Header({
       ) {
         return;
       }
-      void getCurrentWindow().startDragging().catch((err) => {
-        console.warn("[omnitab] window drag failed:", err);
-      });
+      void getCurrentWindow()
+        .startDragging()
+        .catch((err) => {
+          console.warn("[omnitab] window drag failed:", err);
+        });
     },
     [tabDragActive],
   );
@@ -225,7 +232,7 @@ export function Header({
       {IS_MAC && <span className="mr-1 h-full w-px shrink-0 bg-border" />}
 
       <div
-        className="flex h-full min-w-0 flex-1 items-center gap-2"
+        className="flex h-full min-w-0 flex-1 items-center"
         data-omnitab-tab-drop-zone
         onPointerDown={startWindowDrag}
       >
@@ -240,6 +247,7 @@ export function Header({
           onPin={onPin}
           onRename={onRename}
           onTabDragStart={onTabDragStart}
+          onTabDragMove={onTabDragMove}
           onTabDragEnd={onTabDragEnd}
           tabDragActive={tabDragActive}
           externalDropTarget={
@@ -252,10 +260,6 @@ export function Header({
           }
           externalDragPreview={externalTabDragHover?.preview ?? null}
           compact={compact}
-        />
-        <div
-          data-tauri-drag-region={!tabDragActive ? true : undefined}
-          className="h-full min-w-2 flex-1"
         />
       </div>
 

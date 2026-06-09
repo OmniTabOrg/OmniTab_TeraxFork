@@ -20,6 +20,11 @@ export type TabTransferPayload = {
   targetTabId?: number | null;
   targetEdge?: TabDropEdge;
   replaceTargetTabs?: boolean;
+  detachedDrag?: {
+    originWindow: string;
+    grabOffset: { x: number; y: number };
+    floatingWindow?: boolean;
+  };
 };
 
 export type TabTransferAccepted = {

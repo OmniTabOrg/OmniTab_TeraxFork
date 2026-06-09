@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "OmniTab",
-  "version": "0.7.3",
+  "version": "0.7.4",
   "identifier": "app.almyyyy.omnitab",
   "build": {
     "beforeDevCommand": "pnpm dev",
@@ -14,10 +14,10 @@
     "windows": [
       {
         "title": "OmniTab",
-        "width": 800,
+        "width": 600,
         "height": 600,
-        "minWidth": 420,
-        "minHeight": 280,
+        "minWidth": 500,
+        "minHeight": 500,
         "titleBarStyle": "Overlay",
         "hiddenTitle": true,
         "visible": false

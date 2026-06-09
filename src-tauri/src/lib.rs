@@ -27,10 +27,10 @@ struct TabDragPayload {
     payload: String,
 }
 
-#[cfg(target_os = "macos")]
-#[link(name = "CoreGraphics", kind = "framework")]
-unsafe extern "C" {
-    fn CGEventSourceButtonState(state_id: u32, button: u32) -> bool;
+#[derive(serde::Deserialize)]
+struct WindowPosition {
+    x: i32,
+    y: i32,
 }
 
 #[tauri::command]
@@ -115,18 +115,18 @@ fn tab_drag_metrics(state: State<'_, TabDragState>) -> Vec<serde_json::Value> {
 }
 
 #[tauri::command]
-fn tab_drag_left_button_down() -> Option<bool> {
-    #[cfg(target_os = "macos")]
-    {
-        const COMBINED_SESSION_STATE: u32 = 0;
-        const LEFT_MOUSE_BUTTON: u32 = 0;
-        Some(unsafe { CGEventSourceButtonState(COMBINED_SESSION_STATE, LEFT_MOUSE_BUTTON) })
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    {
-        None
-    }
+fn tab_drag_set_window_position(
+    app: tauri::AppHandle,
+    label: String,
+    x: i32,
+    y: i32,
+) -> Result<(), String> {
+    let window = app
+        .get_webview_window(&label)
+        .ok_or_else(|| format!("window not found: {label}"))?;
+    window
+        .set_position(PhysicalPosition::new(x, y))
+        .map_err(|e| e.to_string())
 }
 
 fn parse_launch_dir() -> Option<String> {
@@ -175,12 +175,22 @@ fn encode_url_component(value: &str) -> String {
     out
 }
 
+fn append_query_param(url: &mut String, key: &str, value: &str) {
+    url.push(if url.contains('?') { '&' } else { '?' });
+    url.push_str(key);
+    url.push('=');
+    url.push_str(value);
+}
+
 #[tauri::command]
 async fn open_main_window(
     app: tauri::AppHandle,
     source: WebviewWindow,
     registry: State<'_, workspace::WorkspaceRegistry>,
     cwd: Option<String>,
+    position: Option<WindowPosition>,
+    detached_drag: Option<bool>,
+    defer_show: Option<bool>,
 ) -> Result<String, String> {
     let cwd = cwd.map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
     if let Some(ref cwd) = cwd {
@@ -188,10 +198,16 @@ async fn open_main_window(
     }
 
     let label = next_main_window_label(&app);
-    let url = match cwd {
+    let mut url = match cwd {
         Some(cwd) => format!("index.html?launchCwd={}", encode_url_component(&cwd)),
         None => "index.html".to_string(),
     };
+    if detached_drag.unwrap_or(false) {
+        append_query_param(&mut url, "detachedDrag", "1");
+    }
+    if defer_show.unwrap_or(false) {
+        append_query_param(&mut url, "deferShow", "1");
+    }
 
     let builder = WebviewWindowBuilder::new(&app, label.clone(), WebviewUrl::App(url.into()))
         .title("OmniTab")
@@ -210,7 +226,9 @@ async fn open_main_window(
 
     let window = builder.build().map_err(|e| e.to_string())?;
 
-    if let Ok(pos) = source.outer_position() {
+    if let Some(pos) = position {
+        let _ = window.set_position(PhysicalPosition::new(pos.x, pos.y));
+    } else if let Ok(pos) = source.outer_position() {
         let _ = window.set_position(PhysicalPosition::new(pos.x + 32, pos.y + 32));
     } else {
         let _ = window.center();
@@ -429,7 +447,7 @@ pub fn run() {
             tab_drag_set_metrics,
             tab_drag_clear_metrics,
             tab_drag_metrics,
-            tab_drag_left_button_down,
+            tab_drag_set_window_position,
             open_main_window,
             open_settings_window,
             browser::browser_navigate,

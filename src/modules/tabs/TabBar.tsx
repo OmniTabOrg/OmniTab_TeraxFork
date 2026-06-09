@@ -54,6 +54,10 @@ type Props = {
   /** Set a terminal tab's custom label; empty string resets to default. */
   onRename: (id: number, title: string) => void;
   onTabDragStart?: (id: number) => string | null;
+  onTabDragMove?: (
+    raw: string,
+    target: { targetId: number | null; edge: TabDropEdge } | null,
+  ) => boolean | void;
   onTabDragEnd?: (raw: string, detached: boolean) => void;
   tabDragActive?: boolean;
   externalDropTarget?: {
@@ -100,12 +104,14 @@ export function TabBar({
   onPin,
   onRename,
   onTabDragStart,
+  onTabDragMove,
   onTabDragEnd,
   tabDragActive,
   externalDropTarget,
   externalDragPreview,
   compact,
 }: Props) {
+  const stripRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const dragStateRef = useRef<PointerDragState | null>(null);
   const bodyDragStyleRef = useRef<{
@@ -164,7 +170,7 @@ export function TabBar({
       x: number,
       y: number,
     ): { targetId: number | null; edge: TabDropEdge } | null => {
-      const strip = scrollRef.current;
+      const strip = stripRef.current;
       if (!strip) return null;
       const stripRect = strip.getBoundingClientRect();
       if (
@@ -198,7 +204,9 @@ export function TabBar({
     ? dragOver
     : (externalDropTarget ?? dragOver);
   const effectiveDragPreview = dragPreview ?? externalDragPreview ?? null;
-  const showDropIndicators = tabDragActive || effectiveDragPreview !== null;
+  const showDropIndicators =
+    !dragStateRef.current?.raw &&
+    (tabDragActive || effectiveDragPreview !== null);
 
   const resetPointerDrag = useCallback(() => {
     const state = dragStateRef.current;
@@ -246,6 +254,11 @@ export function TabBar({
     if (tabDragActive || !dragStateRef.current?.raw) return;
     resetPointerDrag();
   }, [resetPointerDrag, tabDragActive]);
+
+  useEffect(() => {
+    if (tabDragActive || externalDropTarget || externalDragPreview) return;
+    setDragOver(null);
+  }, [externalDragPreview, externalDropTarget, tabDragActive]);
 
   useEffect(() => resetPointerDrag, [resetPointerDrag]);
 
@@ -296,9 +309,13 @@ export function TabBar({
         x: e.clientX,
         y: e.clientY,
       });
-      setDragOver(dropTargetAtPoint(e.clientX, e.clientY));
+      const target = dropTargetAtPoint(e.clientX, e.clientY);
+      setDragOver(target);
+      if (state.raw && onTabDragMove?.(state.raw, target)) {
+        resetPointerDrag();
+      }
     },
-    [dropTargetAtPoint, startPointerDrag],
+    [dropTargetAtPoint, onTabDragMove, resetPointerDrag, startPointerDrag],
   );
 
   const handleTabPointerUp = useCallback(
@@ -335,7 +352,7 @@ export function TabBar({
 
   return (
     <div
-      ref={scrollRef}
+      ref={stripRef}
       data-omnitab-tab-strip
       data-omnitab-tab-drop-zone
       onPointerMove={(e) => {
@@ -345,206 +362,205 @@ export function TabBar({
       onPointerLeave={() => {
         if (!dragStateRef.current?.raw) setDragOver(null);
       }}
-      className="min-w-0 shrink overflow-x-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+      className="flex min-w-0 flex-1 items-center overflow-hidden"
     >
-      <div className="flex w-max items-center gap-0.5">
-        <div
-          role="tablist"
-          aria-orientation="horizontal"
-          className="flex h-7 w-max items-center gap-0.5 bg-transparent p-0"
-        >
-          {tabs.map((t) => {
-            const isPreview = t.kind === "editor" && (t as EditorTab).preview;
-            const isActive = t.id === activeId;
-            let tabNode: ReactNode;
+      <div
+        ref={scrollRef}
+        role="tablist"
+        aria-orientation="horizontal"
+        className="flex h-7 min-w-0 shrink items-center gap-0.5 overflow-hidden bg-transparent p-0"
+      >
+        {tabs.map((t) => {
+          const isPreview = t.kind === "editor" && (t as EditorTab).preview;
+          const isActive = t.id === activeId;
+          let tabNode: ReactNode;
 
-            // While renaming, render a non-button cell so the <input> remains
-            // focusable and selectable across WebKit/Tauri.
-            if (editingId === t.id && t.kind === "terminal") {
-              tabNode = (
-                <div
-                  data-tab-id={t.id}
+          // While renaming, render a non-button cell so the <input> remains
+          // focusable and selectable across WebKit/Tauri.
+          if (editingId === t.id && t.kind === "terminal") {
+            tabNode = (
+              <div
+                data-tab-id={t.id}
+                className={cn(
+                  "flex h-7 min-w-0 shrink items-center gap-1.5 rounded-md bg-accent text-xs text-foreground",
+                  compact ? "px-1.5" : "px-2",
+                )}
+              >
+                <TabIcon tab={t} />
+                <TabRenameInput
+                  initial={labelFor(t)}
+                  onCommit={(value) => {
+                    onRename(t.id, value);
+                    setEditingId(null);
+                  }}
+                  onCancel={() => setEditingId(null)}
+                />
+              </div>
+            );
+          } else {
+            const trigger = (
+              <div
+                role="tab"
+                tabIndex={isActive ? 0 : -1}
+                aria-selected={isActive}
+                data-tab-id={t.id}
+                onPointerDown={(e) => handleTabPointerDown(e, t)}
+                onPointerMove={handleTabPointerMove}
+                onPointerUp={handleTabPointerUp}
+                onPointerCancel={handleTabPointerCancel}
+                onClick={() => onSelect(t.id)}
+                onKeyDown={(e) => handleTabKeyDown(e, t.id)}
+                onDoubleClick={() => isPreview && onPin(t.id)}
+                onAuxClick={(e) => {
+                  if (e.button === 1) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    onClose(t.id);
+                  }
+                }}
+                onMouseDown={(e) => {
+                  if (e.button === 1) e.preventDefault();
+                }}
+                className={cn(
+                  "group flex h-7 min-w-0 shrink cursor-default items-center justify-between gap-1.5 rounded-md text-xs transition-colors hover:text-foreground/80",
+                  dragPreview?.tabId === t.id && "opacity-45",
+                  isActive
+                    ? "bg-accent text-foreground"
+                    : "text-muted-foreground",
+                  compact ? "px-1.5" : tabs.length === 1 ? "px-2" : "ps-2 pe-1",
+                )}
+              >
+                <span
                   className={cn(
-                    "flex h-7 shrink-0 items-center gap-1.5 rounded-md bg-accent text-xs text-foreground",
-                    compact ? "px-1.5" : "px-2",
+                    "flex min-w-0 items-center gap-1.5 truncate",
+                    compact ? "max-w-48" : "max-w-80",
                   )}
                 >
                   <TabIcon tab={t} />
-                  <TabRenameInput
-                    initial={labelFor(t)}
-                    onCommit={(value) => {
-                      onRename(t.id, value);
-                      setEditingId(null);
-                    }}
-                    onCancel={() => setEditingId(null)}
-                  />
-                </div>
-              );
-            } else {
-              const trigger = (
-                <div
-                  role="tab"
-                  tabIndex={isActive ? 0 : -1}
-                  aria-selected={isActive}
-                  data-tab-id={t.id}
-                  onPointerDown={(e) => handleTabPointerDown(e, t)}
-                  onPointerMove={handleTabPointerMove}
-                  onPointerUp={handleTabPointerUp}
-                  onPointerCancel={handleTabPointerCancel}
-                  onClick={() => onSelect(t.id)}
-                  onKeyDown={(e) => handleTabKeyDown(e, t.id)}
-                  onDoubleClick={() => isPreview && onPin(t.id)}
-                  onAuxClick={(e) => {
-                    if (e.button === 1) {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      onClose(t.id);
-                    }
-                  }}
-                  onMouseDown={(e) => {
-                    if (e.button === 1) e.preventDefault();
-                  }}
-                  className={cn(
-                    "group flex h-7 shrink-0 cursor-default items-center gap-1.5 rounded-md text-xs transition-colors hover:text-foreground/80 justify-between",
-                    dragPreview?.tabId === t.id && "opacity-45",
-                    isActive
-                      ? "bg-accent text-foreground"
-                      : "text-muted-foreground",
-                    compact
-                      ? "px-1.5"
-                      : tabs.length === 1
-                        ? "px-2"
-                        : "ps-2 pe-1",
-                  )}
-                >
-                  <span
-                    className={cn(
-                      "flex items-center gap-1.5 truncate",
-                      compact ? "max-w-48" : "max-w-80",
-                    )}
-                  >
-                    <TabIcon tab={t} />
-                    {/* Preview tabs use italic to signal the transient state,
+                  {/* Preview tabs use italic to signal the transient state,
                       matching the visual convention from VSCode. */}
-                    <span className={cn("truncate", isPreview && "italic")}>
-                      {labelFor(t)}
-                    </span>
-                    {t.kind === "editor" && t.dirty ? (
-                      <span
-                        aria-label="Unsaved changes"
-                        className="size-1.5 shrink-0 rounded-full bg-foreground/70"
-                      />
-                    ) : null}
+                  <span className={cn("truncate", isPreview && "italic")}>
+                    {labelFor(t)}
                   </span>
-                  <button
-                    type="button"
-                    data-tab-close
-                    aria-label="Close tab"
-                    onPointerDown={(e) => e.stopPropagation()}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onClose(t.id);
-                    }}
-                    className="rounded p-0.5 opacity-0 transition-opacity hover:bg-accent hover:opacity-100 group-hover:opacity-60"
-                  >
-                    <HugeiconsIcon
-                      icon={Cancel01Icon}
-                      size={11}
-                      strokeWidth={2}
+                  {t.kind === "editor" && t.dirty ? (
+                    <span
+                      aria-label="Unsaved changes"
+                      className="size-1.5 shrink-0 rounded-full bg-foreground/70"
                     />
-                  </button>
-                </div>
-              );
-
-              tabNode =
-                t.kind !== "terminal" ? (
-                  trigger
-                ) : (
-                  <ContextMenu>
-                    <ContextMenuTrigger asChild>{trigger}</ContextMenuTrigger>
-                    <ContextMenuContent
-                      className="min-w-36"
-                      onCloseAutoFocus={(e) => e.preventDefault()}
-                    >
-                      <ContextMenuItem onSelect={() => setEditingId(t.id)}>
-                        <HugeiconsIcon
-                          icon={PencilEdit02Icon}
-                          size={14}
-                          strokeWidth={1.75}
-                        />
-                        <span className="flex-1">Rename</span>
-                      </ContextMenuItem>
-                      <ContextMenuSeparator />
-                      <ContextMenuItem onSelect={() => onClose(t.id)}>
-                        <HugeiconsIcon
-                          icon={Cancel01Icon}
-                          size={14}
-                          strokeWidth={1.75}
-                        />
-                        <span className="flex-1">Close</span>
-                      </ContextMenuItem>
-                    </ContextMenuContent>
-                  </ContextMenu>
-                );
-            }
-
-            return (
-              <Fragment key={t.id}>
-                <DropIndicator
-                  active={effectiveDropTarget?.targetId === t.id}
-                  visible={showDropIndicators}
-                  windowDragEnabled={!tabDragActive}
-                />
-                {tabNode}
-              </Fragment>
+                  ) : null}
+                </span>
+                <button
+                  type="button"
+                  data-tab-close
+                  aria-label="Close tab"
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onClose(t.id);
+                  }}
+                  className="shrink-0 rounded p-0.5 opacity-0 transition-opacity hover:bg-accent hover:opacity-100 group-hover:opacity-60"
+                >
+                  <HugeiconsIcon
+                    icon={Cancel01Icon}
+                    size={11}
+                    strokeWidth={2}
+                  />
+                </button>
+              </div>
             );
-          })}
-          <DropIndicator
-            active={effectiveDropTarget?.targetId === null}
-            visible={showDropIndicators}
-            windowDragEnabled={!tabDragActive}
-          />
-        </div>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="size-7 shrink-0 rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
-              title="New tab"
-            >
-              <HugeiconsIcon icon={PlusSignIcon} size={14} strokeWidth={2} />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" className="min-w-44">
-            <DropdownMenuItem onSelect={() => onNew()}>
-              <HugeiconsIcon
-                icon={ComputerTerminal02Icon}
-                size={14}
-                strokeWidth={1.75}
+
+            tabNode =
+              t.kind !== "terminal" ? (
+                trigger
+              ) : (
+                <ContextMenu>
+                  <ContextMenuTrigger asChild>{trigger}</ContextMenuTrigger>
+                  <ContextMenuContent
+                    className="min-w-36"
+                    onCloseAutoFocus={(e) => e.preventDefault()}
+                  >
+                    <ContextMenuItem onSelect={() => setEditingId(t.id)}>
+                      <HugeiconsIcon
+                        icon={PencilEdit02Icon}
+                        size={14}
+                        strokeWidth={1.75}
+                      />
+                      <span className="flex-1">Rename</span>
+                    </ContextMenuItem>
+                    <ContextMenuSeparator />
+                    <ContextMenuItem onSelect={() => onClose(t.id)}>
+                      <HugeiconsIcon
+                        icon={Cancel01Icon}
+                        size={14}
+                        strokeWidth={1.75}
+                      />
+                      <span className="flex-1">Close</span>
+                    </ContextMenuItem>
+                  </ContextMenuContent>
+                </ContextMenu>
+              );
+          }
+
+          return (
+            <Fragment key={t.id}>
+              <DropIndicator
+                active={effectiveDropTarget?.targetId === t.id}
+                visible={showDropIndicators}
+                windowDragEnabled={!tabDragActive}
               />
-              <span className="flex-1">Terminal</span>
-              <span className="text-xs text-muted-foreground">
-                {fmtShortcut(MOD_KEY, "T")}
-              </span>
-            </DropdownMenuItem>
-            <DropdownMenuItem onSelect={() => onNewWindow()}>
-              <HugeiconsIcon icon={BrowserIcon} size={14} strokeWidth={1.75} />
-              <span className="flex-1">Window</span>
-              <span className="text-xs text-muted-foreground">
-                {fmtShortcut(MOD_KEY, "W")}
-              </span>
-            </DropdownMenuItem>
-            <DropdownMenuItem onSelect={() => onNewPreview()}>
-              <HugeiconsIcon icon={Globe02Icon} size={14} strokeWidth={1.75} />
-              <span className="flex-1">Browser</span>
-              <span className="text-xs text-muted-foreground">
-                {fmtShortcut(MOD_KEY, "P")}
-              </span>
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+              {tabNode}
+            </Fragment>
+          );
+        })}
+        <DropIndicator
+          active={effectiveDropTarget?.targetId === null}
+          visible={showDropIndicators}
+          windowDragEnabled={!tabDragActive}
+        />
       </div>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-7 shrink-0 rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+            title="New tab"
+          >
+            <HugeiconsIcon icon={PlusSignIcon} size={14} strokeWidth={2} />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start" className="min-w-44">
+          <DropdownMenuItem onSelect={() => onNew()}>
+            <HugeiconsIcon
+              icon={ComputerTerminal02Icon}
+              size={14}
+              strokeWidth={1.75}
+            />
+            <span className="flex-1">Terminal</span>
+            <span className="text-xs text-muted-foreground">
+              {fmtShortcut(MOD_KEY, "T")}
+            </span>
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => onNewWindow()}>
+            <HugeiconsIcon icon={BrowserIcon} size={14} strokeWidth={1.75} />
+            <span className="flex-1">Window</span>
+            <span className="text-xs text-muted-foreground">
+              {fmtShortcut(MOD_KEY, "W")}
+            </span>
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => onNewPreview()}>
+            <HugeiconsIcon icon={Globe02Icon} size={14} strokeWidth={1.75} />
+            <span className="flex-1">Browser</span>
+            <span className="text-xs text-muted-foreground">
+              {fmtShortcut(MOD_KEY, "P")}
+            </span>
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+      <div
+        data-tauri-drag-region={!tabDragActive ? true : undefined}
+        className="h-full min-w-2 flex-1"
+      />
       {effectiveDragPreview && (
         <div
           className="pointer-events-none fixed z-50 max-w-72 truncate rounded-md border border-border bg-popover px-2 py-1 text-xs text-popover-foreground shadow-lg"

@@ -13,6 +13,9 @@ import { initLaunchDir } from "./lib/launchDir";
 import { USE_CUSTOM_WINDOW_CONTROLS } from "./lib/platform";
 
 const currentWindow = getCurrentWindow();
+const params = new URLSearchParams(window.location.search);
+const isDetachedDragWindow = params.get("detachedDrag") === "1";
+const deferShow = params.get("deferShow") === "1";
 
 if (USE_CUSTOM_WINDOW_CONTROLS) {
   document.documentElement.dataset.chrome = "borderless";
@@ -36,6 +39,8 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
 const showWindow = () => {
   currentWindow.show().catch((e) => console.error("window.show failed:", e));
 };
-setTimeout(showWindow, 50);
-// Safety net: if the first show somehow fails to take effect, force again.
-setTimeout(showWindow, 500);
+if (!deferShow) {
+  setTimeout(showWindow, isDetachedDragWindow ? 0 : 50);
+  // Safety net: if the first show somehow fails to take effect, force again.
+  setTimeout(showWindow, isDetachedDragWindow ? 120 : 500);
+}
