@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "OmniTab",
-  "version": "0.7.4",
+  "version": "0.7.5",
   "identifier": "app.almyyyy.omnitab",
   "build": {
     "beforeDevCommand": "pnpm dev",
@@ -70,7 +70,7 @@
     },
     "category": "DeveloperTool",
     "shortDescription": "AI-native terminal emulator",
-    "longDescription": "OmniTab - an open-source AI-native terminal emulator with multi-tab, file explorer, code editor, browser tabs, voice input, and AI agents."
+    "longDescription": "OmniTab - a lightweight dev workspace with multi-tab, file explorer, code editor, browser tabs, voice input, and AI agents."
   },
   "plugins": {
     "updater": {

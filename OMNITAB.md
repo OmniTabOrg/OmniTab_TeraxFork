@@ -4,7 +4,7 @@ OmniTab loads `OMNITAB.md` from the workspace root as agent memory (similar to A
 
 ## Project
 
-**OmniTab** — open-source AI-native terminal emulator. Tauri 2 + Rust (`portable-pty`) backend, React 19 + TypeScript + xterm.js (webgl) client, BYOK AI via Vercel AI SDK v6.
+**OmniTab** — Lightweight dev workspace. Tauri 2 + Rust (`portable-pty`) backend, React 19 + TypeScript + xterm.js (webgl) client, BYOK AI via Vercel AI SDK v6.
 
 - Bundle id: `app.almyyyy.omnitab`
 - Package manager: **pnpm**

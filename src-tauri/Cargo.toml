@@ -1,7 +1,7 @@
 [package]
 name = "omnitab"
-version = "0.7.3"
-description = "OmniTab - an open-source AI-native terminal emulator"
+version = "0.7.5"
+description = "OmniTab - a lightweight dev workspace"
 authors = ["Almyyyy"]
 license = "Apache-2.0"
 edition = "2021"
