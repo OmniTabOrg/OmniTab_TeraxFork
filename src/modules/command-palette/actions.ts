@@ -222,6 +222,7 @@ export function createCommandPaletteActions(
       keywords: ["sidebar", "files", "explorer"],
       icon: SidebarLeftIcon,
       shortcutId: "sidebar.toggle",
+      disabledReason: activeTerminalTab ? undefined : "No terminal tab",
       run: ctx.toggleSidebar,
     },
     {
@@ -231,7 +232,11 @@ export function createCommandPaletteActions(
       keywords: ["explorer", "workspace", "file search"],
       icon: Search01Icon,
       shortcutId: "explorer.search",
-      disabledReason: ctx.explorerRoot ? undefined : "No workspace root",
+      disabledReason: !activeTerminalTab
+        ? "No terminal tab"
+        : ctx.explorerRoot
+          ? undefined
+          : "No workspace root",
       run: ctx.focusExplorerSearch,
       deferRun: true,
     },

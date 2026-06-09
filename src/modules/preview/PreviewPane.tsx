@@ -182,7 +182,9 @@ export const PreviewPane = forwardRef<PreviewPaneHandle, Props>(
           void updateBounds();
         });
         void webview.once<string>("tauri://error", (event) => {
-          setError(String(event.payload || "Failed to create browser webview."));
+          setError(
+            String(event.payload || "Failed to create browser webview."),
+          );
           closeWebview();
         });
       },
@@ -245,13 +247,7 @@ export const PreviewPane = forwardRef<PreviewPaneHandle, Props>(
           unlisten = fn;
         });
       return () => unlisten?.();
-    }, [
-      onUrlChange,
-      recordNavigation,
-      syncBrowserState,
-      webviewLabel,
-      window,
-    ]);
+    }, [onUrlChange, recordNavigation, syncBrowserState, webviewLabel, window]);
 
     useEffect(() => {
       const viewport = viewportRef.current;
@@ -311,7 +307,7 @@ export const PreviewPane = forwardRef<PreviewPaneHandle, Props>(
 
     return (
       <div
-        className="flex h-full w-full flex-col overflow-hidden rounded-md border border-border/60 bg-background"
+        className="flex h-full w-full flex-col overflow-hidden bg-background"
         style={{
           visibility: visible ? "visible" : "hidden",
           pointerEvents: visible ? "auto" : "none",
@@ -339,7 +335,10 @@ export const PreviewPane = forwardRef<PreviewPaneHandle, Props>(
           }}
           onBack={() => {
             if (!canGoBack) return;
-            setHistory((prev) => ({ ...prev, index: Math.max(0, prev.index - 1) }));
+            setHistory((prev) => ({
+              ...prev,
+              index: Math.max(0, prev.index - 1),
+            }));
             setLoading(true);
             void browserGoBack(webviewLabel).catch((e) => {
               setLoading(false);
@@ -429,7 +428,7 @@ function EmptyState() {
       <div className="space-y-1.5">
         <p className="text-sm font-medium text-foreground">New browser tab</p>
         <p className="max-w-sm text-xs leading-relaxed text-muted-foreground">
-          Search, enter a URL, or open a local dev server from the Ports menu.
+          Search or enter a URL.
         </p>
       </div>
     </div>

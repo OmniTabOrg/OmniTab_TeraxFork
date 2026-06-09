@@ -12,7 +12,6 @@ import {
   ArrowReloadHorizontalIcon,
   ArrowRight01Icon,
   Delete02Icon,
-  Globe02Icon,
   LinkSquare02Icon,
   MoreHorizontalCircle01Icon,
   StopCircleIcon,
@@ -28,31 +27,6 @@ import {
   useRef,
   useState,
 } from "react";
-
-type PortPreset = {
-  port: number;
-  label: string;
-  hint: string;
-};
-
-const PORT_PRESETS: readonly PortPreset[] = [
-  { port: 5173, label: "Vite", hint: "vite, sveltekit" },
-  { port: 5174, label: "Vite (alt)", hint: "second vite instance" },
-  { port: 3000, label: "Next.js", hint: "next, express, rails" },
-  { port: 3001, label: "Next.js (alt)", hint: "second next instance" },
-  { port: 4173, label: "Vite preview", hint: "vite preview" },
-  { port: 4200, label: "Angular", hint: "angular cli" },
-  { port: 4321, label: "Astro", hint: "astro" },
-  { port: 5500, label: "Live Server", hint: "vscode live server" },
-  { port: 6006, label: "Storybook", hint: "storybook" },
-  { port: 8080, label: "Webpack", hint: "webpack, vue cli" },
-  { port: 8081, label: "Metro", hint: "react native metro" },
-  { port: 8000, label: "Django / FastAPI", hint: "django, fastapi" },
-  { port: 8888, label: "Jupyter", hint: "jupyter notebook" },
-  { port: 5000, label: "Flask", hint: "flask" },
-  { port: 7860, label: "Gradio", hint: "gradio" },
-  { port: 11434, label: "Ollama", hint: "ollama api" },
-];
 
 export type PreviewAddressBarHandle = {
   focus: () => void;
@@ -97,7 +71,6 @@ export const PreviewAddressBar = forwardRef<PreviewAddressBarHandle, Props>(
   ) {
     const [draft, setDraft] = useState(url);
     const [notice, setNotice] = useState<string | null>(null);
-    const [checkingPort, setCheckingPort] = useState<number | null>(null);
     const inputRef = useRef<HTMLInputElement>(null);
 
     useEffect(() => {
@@ -128,20 +101,6 @@ export const PreviewAddressBar = forwardRef<PreviewAddressBarHandle, Props>(
       else onReload();
     };
 
-    const tryPort = async (port: number) => {
-      setNotice(null);
-      setCheckingPort(port);
-      const url = `http://localhost:${port}`;
-      const ok = await probeUrl(url);
-      setCheckingPort(null);
-      if (!ok) {
-        setNotice(`No server listening on :${port}.`);
-        return;
-      }
-      setDraft(url);
-      onSubmit(url);
-    };
-
     return (
       <div className="shrink-0 border-b border-border/60">
         <div className="flex h-9 items-center gap-1 bg-card/40 px-1.5">
@@ -162,44 +121,6 @@ export const PreviewAddressBar = forwardRef<PreviewAddressBarHandle, Props>(
             onClick={loading ? onStop : onReload}
             icon={loading ? StopCircleIcon : ArrowReloadHorizontalIcon}
           />
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                title="Common dev-server ports"
-                className="h-7 shrink-0 gap-1 rounded-md px-1.5 text-[11px] text-muted-foreground hover:bg-accent hover:text-foreground"
-              >
-                <HugeiconsIcon
-                  icon={Globe02Icon}
-                  size={13}
-                  strokeWidth={1.75}
-                />
-                <span className="hidden sm:inline">Ports</span>
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent
-              align="start"
-              className="max-h-80 min-w-56 overflow-y-auto"
-            >
-              {PORT_PRESETS.map((p) => (
-                <DropdownMenuItem
-                  key={p.port}
-                  title={p.hint}
-                  onSelect={(e) => {
-                    e.preventDefault();
-                    void tryPort(p.port);
-                  }}
-                >
-                  <span className="flex-1">{p.label}</span>
-                  <span className="text-xs text-muted-foreground">
-                    {checkingPort === p.port ? "checking..." : `:${p.port}`}
-                  </span>
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
           <div className="flex min-w-0 flex-1 items-center">
             <Input
               ref={inputRef}
@@ -322,20 +243,6 @@ function IconButton({
       <HugeiconsIcon icon={icon} size={14} strokeWidth={1.75} />
     </Button>
   );
-}
-
-async function probeUrl(url: string): Promise<boolean> {
-  try {
-    await fetch(url, {
-      method: "GET",
-      mode: "no-cors",
-      cache: "no-store",
-      signal: AbortSignal.timeout(900),
-    });
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 function normalizeBrowserInput(raw: string): string | null {

@@ -88,7 +88,6 @@ import { SidebarRail, type SidebarViewId } from "@/modules/sidebar";
 import { SourceControlPanel, useSourceControl } from "@/modules/source-control";
 import { StatusBar } from "@/modules/statusbar";
 import {
-  MAX_PANES_PER_TAB,
   TAB_DRAG_ENDED_EVENT,
   TAB_DRAG_HOVER_EVENT,
   TAB_DRAG_STARTED_EVENT,
@@ -450,6 +449,7 @@ export default function App() {
   const sidebarRef = useRef<PanelImperativeHandle | null>(null);
   const sidebarWidthRef = useRef(readSidebarWidth());
   const sidebarWidthWriteTimerRef = useRef(0);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [sidebarView, setSidebarViewState] =
     useState<SidebarViewId>(readSidebarView);
   const persistSidebarView = useCallback((view: SidebarViewId) => {
@@ -463,19 +463,26 @@ export default function App() {
   const toggleSidebar = useCallback(() => {
     const p = sidebarRef.current;
     if (!p) return;
-    if (p.getSize().asPercentage <= 0) p.expand();
-    else p.collapse();
+    if (p.getSize().asPercentage <= 0) {
+      setSidebarCollapsed(false);
+      p.resize(`${sidebarWidthRef.current}px`);
+    } else {
+      setSidebarCollapsed(true);
+      p.collapse();
+    }
   }, []);
   const cycleSidebarView = useCallback(
     (view: SidebarViewId) => {
       const panel = sidebarRef.current;
       const collapsed = panel ? panel.getSize().asPercentage <= 0 : false;
       if (collapsed) {
+        setSidebarCollapsed(false);
         if (panel) panel.resize(`${sidebarWidthRef.current}px`);
         if (view !== sidebarView) persistSidebarView(view);
         return;
       }
       if (view === sidebarView) {
+        setSidebarCollapsed(true);
         panel?.collapse();
         return;
       }
@@ -2500,6 +2507,7 @@ export default function App() {
         return !(target as HTMLElement | null)?.closest?.(".xterm");
       }
       if (id === "sidebar.toggle") {
+        if (activeTab?.kind !== "terminal") return true;
         // Ctrl+B is also Claude Code's "run in background" key. While a terminal
         // is focused, let Ctrl+B reach the shell/Claude instead of toggling the
         // sidebar. Ctrl+Shift+B (second binding) still toggles it from anywhere.
@@ -2511,6 +2519,9 @@ export default function App() {
         // Only defer the plain (no-shift) Ctrl/⌘+B binding; the Shift variant
         // is the always-on toggle and is never claimed by the terminal.
         return inTerminal && !e.shiftKey;
+      }
+      if (id === "explorer.focus") {
+        return activeTab?.kind !== "terminal";
       }
       return false;
     },
@@ -2782,6 +2793,8 @@ export default function App() {
           onCwd={handleTerminalCwd}
           onExit={handleLeafExit}
           onFocusLeaf={handleFocusLeaf}
+          onToggleSidebar={toggleSidebar}
+          onSplit={splitActivePaneInActiveTab}
         />
       </div>
       <div
@@ -2801,7 +2814,7 @@ export default function App() {
       </div>
       <div
         className={cn(
-          "absolute inset-0 px-3 pt-2 pb-2",
+          "absolute inset-0",
           !isPreviewTab && "invisible pointer-events-none",
         )}
         aria-hidden={!isPreviewTab}
@@ -2883,12 +2896,6 @@ export default function App() {
               onTabDragEnd={handleTabDragEnd}
               tabDragActive={tabDragActive}
               externalTabDragHover={externalTabDragHover}
-              onToggleSidebar={toggleSidebar}
-              onSplit={splitActivePaneInActiveTab}
-              canSplit={
-                activeTerminalTab !== null &&
-                leafIds(activeTerminalTab.paneTree).length < MAX_PANES_PER_TAB
-              }
               onActivateAgent={onActivateAgent}
               onActivateLocalAgent={onActivateLocalAgent}
               onOpenSettings={() => void openSettingsWindow()}
@@ -2900,52 +2907,64 @@ export default function App() {
               orientation="horizontal"
               className="min-h-0 flex-1"
             >
+              {isTerminalTab ? (
+                <>
+                  <ResizablePanel
+                    id="sidebar"
+                    panelRef={sidebarRef}
+                    defaultSize={
+                      sidebarCollapsed ? "0px" : `${sidebarWidthRef.current}px`
+                    }
+                    minSize={`${SIDEBAR_MIN_WIDTH}px`}
+                    maxSize={`${SIDEBAR_MAX_WIDTH}px`}
+                    collapsible
+                    collapsedSize={0}
+                    onResize={(size) => {
+                      const collapsed = size.inPixels <= 0;
+                      setSidebarCollapsed(collapsed);
+                      if (!collapsed) persistSidebarWidth(size.inPixels);
+                    }}
+                  >
+                    <div className="flex h-full min-h-0 flex-col border-r border-border/60 bg-card">
+                      <div className="min-h-0 flex-1">
+                        {sidebarView === "explorer" ? (
+                          <HostsPanel
+                            ref={explorerRef}
+                            localRootPath={explorerRoot}
+                            activeFilePath={explorerActiveFilePath}
+                            onOpenFile={handleOpenFile}
+                            onPathRenamed={handlePathRenamed}
+                            onPathDeleted={handlePathDeleted}
+                            onRevealInTerminal={cdInNewTab}
+                            onAttachToAgent={handleAttachFileToAgent}
+                            onOpenMarkdownPreview={openMarkdownPreview}
+                            onOpenHostTerminal={openHostShell}
+                          />
+                        ) : sidebarView === "source-control" ? (
+                          <SourceControlPanel
+                            open
+                            sourceControl={sourceControl}
+                            onOpenDiff={openGitDiffTab}
+                            onOpenGitGraph={openGitGraphFromContext}
+                            onOpenFile={handleOpenFile}
+                          />
+                        ) : null}
+                      </div>
+                      <SidebarRail
+                        activeView={sidebarView}
+                        onSelectView={persistSidebarView}
+                        changedCount={sourceControl.changedCount}
+                      />
+                    </div>
+                  </ResizablePanel>
+                  <ResizableHandle withHandle />
+                </>
+              ) : null}
               <ResizablePanel
-                id="sidebar"
-                panelRef={sidebarRef}
-                defaultSize={`${sidebarWidthRef.current}px`}
-                minSize={`${SIDEBAR_MIN_WIDTH}px`}
-                maxSize={`${SIDEBAR_MAX_WIDTH}px`}
-                collapsible
-                collapsedSize={0}
-                onResize={(size) => {
-                  if (size.inPixels > 0) persistSidebarWidth(size.inPixels);
-                }}
+                id="workspace"
+                defaultSize={isTerminalTab ? "78%" : "100%"}
+                minSize="30%"
               >
-                <div className="flex h-full min-h-0 flex-col border-r border-border/60 bg-card">
-                  <div className="min-h-0 flex-1">
-                    {sidebarView === "explorer" ? (
-                      <HostsPanel
-                        ref={explorerRef}
-                        localRootPath={explorerRoot}
-                        activeFilePath={explorerActiveFilePath}
-                        onOpenFile={handleOpenFile}
-                        onPathRenamed={handlePathRenamed}
-                        onPathDeleted={handlePathDeleted}
-                        onRevealInTerminal={cdInNewTab}
-                        onAttachToAgent={handleAttachFileToAgent}
-                        onOpenMarkdownPreview={openMarkdownPreview}
-                        onOpenHostTerminal={openHostShell}
-                      />
-                    ) : sidebarView === "source-control" ? (
-                      <SourceControlPanel
-                        open
-                        sourceControl={sourceControl}
-                        onOpenDiff={openGitDiffTab}
-                        onOpenGitGraph={openGitGraphFromContext}
-                        onOpenFile={handleOpenFile}
-                      />
-                    ) : null}
-                  </div>
-                  <SidebarRail
-                    activeView={sidebarView}
-                    onSelectView={persistSidebarView}
-                    changedCount={sourceControl.changedCount}
-                  />
-                </div>
-              </ResizablePanel>
-              <ResizableHandle withHandle />
-              <ResizablePanel id="workspace" defaultSize="78%" minSize="30%">
                 <div className="flex h-full min-h-0 flex-col">
                   <div className="relative min-h-0 flex-1">
                     {workspaceSurface}
@@ -2977,7 +2996,7 @@ export default function App() {
             </ResizablePanelGroup>
           </main>
 
-          {!zenMode && (
+          {!zenMode && isTerminalTab && (
             <StatusBar
               cwd={activeCwd}
               filePath={activeFilePath}

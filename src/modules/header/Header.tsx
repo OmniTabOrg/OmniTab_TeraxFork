@@ -1,27 +1,9 @@
 import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { WindowControls } from "@/components/WindowControls";
-import { IS_MAC, KEY_SEP, USE_CUSTOM_WINDOW_CONTROLS } from "@/lib/platform";
-import { usePreferencesStore } from "@/modules/settings/preferences";
-import {
-  getBindingTokens,
-  SHORTCUTS,
-  type ShortcutId,
-} from "@/modules/shortcuts/shortcuts";
+import { IS_MAC, USE_CUSTOM_WINDOW_CONTROLS } from "@/lib/platform";
 import { TabBar, type Tab } from "@/modules/tabs";
 import { NotificationBell } from "@/modules/agents";
-import {
-  GridViewIcon,
-  LayoutTwoColumnIcon,
-  LayoutTwoRowIcon,
-  Settings01Icon,
-  SidebarLeftIcon,
-} from "@hugeicons/core-free-icons";
+import { Settings01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
@@ -60,10 +42,6 @@ type Props = {
       y: number;
     };
   } | null;
-  onToggleSidebar: () => void;
-  onSplit: (dir: "row" | "col") => void;
-  /** Active tab is a terminal and below the per-tab pane cap. */
-  canSplit: boolean;
   onActivateAgent: (tabId: number, leafId: number) => void;
   onActivateLocalAgent: () => void;
   onOpenSettings: () => void;
@@ -86,16 +64,12 @@ export function Header({
   onTabDragEnd,
   tabDragActive,
   externalTabDragHover,
-  onToggleSidebar,
-  onSplit,
-  canSplit,
   onActivateAgent,
   onActivateLocalAgent,
   onOpenSettings,
 }: Props) {
   const rootRef = useRef<HTMLDivElement>(null);
   const [compact, setCompact] = useState(false);
-  const userShortcuts = usePreferencesStore((s) => s.shortcuts);
 
   const startWindowDrag = useCallback(
     (e: PointerEvent<HTMLElement>) => {
@@ -116,17 +90,6 @@ export function Header({
     },
     [tabDragActive],
   );
-
-  const tokensFor = (id: ShortcutId): string => {
-    const s = SHORTCUTS.find((s) => s.id === id);
-    if (!s) return "";
-    const bindings = userShortcuts[id] || s.defaultBindings;
-    if (!bindings || bindings.length === 0) return "";
-    return getBindingTokens(bindings[0]).join(KEY_SEP);
-  };
-
-  const splitRightTokens = tokensFor("pane.splitRight");
-  const splitDownTokens = tokensFor("pane.splitDown");
 
   useEffect(() => {
     const el = rootRef.current;
@@ -167,58 +130,6 @@ export function Header({
       )}
 
       <div className="flex shrink-0 items-center gap-0.5">
-        <Button
-          onClick={onToggleSidebar}
-          title="Toggle sidebar"
-          variant="ghost"
-          size="icon-sm"
-          className="shrink-0 rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
-        >
-          <HugeiconsIcon icon={SidebarLeftIcon} size={18} strokeWidth={1.75} />
-        </Button>
-
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              className="shrink-0 rounded-md text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-50"
-              title="Split terminal"
-              disabled={!canSplit}
-            >
-              <HugeiconsIcon icon={GridViewIcon} size={16} strokeWidth={1.75} />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" className="min-w-44">
-            <DropdownMenuItem onSelect={() => onSplit("row")}>
-              <HugeiconsIcon
-                icon={LayoutTwoColumnIcon}
-                size={14}
-                strokeWidth={1.75}
-              />
-              <span className="flex-1">Split right</span>
-              {splitRightTokens && (
-                <span className="text-xs text-muted-foreground">
-                  {splitRightTokens}
-                </span>
-              )}
-            </DropdownMenuItem>
-            <DropdownMenuItem onSelect={() => onSplit("col")}>
-              <HugeiconsIcon
-                icon={LayoutTwoRowIcon}
-                size={14}
-                strokeWidth={1.75}
-              />
-              <span className="flex-1">Split down</span>
-              {splitDownTokens && (
-                <span className="text-xs text-muted-foreground">
-                  {splitDownTokens}
-                </span>
-              )}
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-
         {!IS_MAC && (
           <NotificationBell
             onActivate={onActivateAgent}
