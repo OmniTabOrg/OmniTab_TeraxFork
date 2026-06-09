@@ -209,24 +209,6 @@ export function useTabs(initial?: Partial<TerminalTab>) {
 
   const newHostShellTab = useCallback(
     (cwd: string | undefined, title: string, hostId: string) => {
-      const existing = tabsRef.current.find(
-        (t) => t.kind === "terminal" && t.hostId === hostId,
-      );
-      if (existing && existing.kind === "terminal") {
-        setTabs((curr) =>
-          curr.map((t) =>
-            t.id === existing.id
-              ? { ...t, title, customTitle: title, hostId }
-              : t,
-          ),
-        );
-        setActiveId(existing.id);
-        return {
-          tabId: existing.id,
-          leafId: existing.activeLeafId,
-          reused: true,
-        };
-      }
       const tabId = nextIdRef.current++;
       const leafId = nextIdRef.current++;
       setTabs((t) => [

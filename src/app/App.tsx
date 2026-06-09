@@ -210,7 +210,6 @@ const SIDEBAR_DEFAULT_WIDTH = 260;
 const SIDEBAR_MIN_WIDTH = 220;
 const SIDEBAR_MAX_WIDTH = 480;
 const SIDEBAR_WIDTH_STORAGE_KEY = "omnitab.sidebar.width";
-const SIDEBAR_VIEW_STORAGE_KEY = "omnitab.sidebar.view";
 
 function clampSidebarWidth(width: number): number {
   return Math.min(
@@ -229,18 +228,6 @@ function readSidebarWidth(): number {
   } catch {
     return SIDEBAR_DEFAULT_WIDTH;
   }
-}
-
-function readSidebarView(): SidebarViewId {
-  try {
-    const stored = window.localStorage.getItem(SIDEBAR_VIEW_STORAGE_KEY);
-    if (stored === "explorer" || stored === "source-control") {
-      return stored;
-    }
-  } catch {
-    // ignore
-  }
-  return "explorer";
 }
 
 function randomTransferId(): string {
@@ -455,16 +442,25 @@ export default function App() {
   const sidebarWidthRef = useRef(readSidebarWidth());
   const sidebarWidthWriteTimerRef = useRef(0);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [sidebarView, setSidebarViewState] =
-    useState<SidebarViewId>(readSidebarView);
-  const persistSidebarView = useCallback((view: SidebarViewId) => {
-    setSidebarViewState(view);
-    try {
-      window.localStorage.setItem(SIDEBAR_VIEW_STORAGE_KEY, view);
-    } catch {
-      // storage may fail in private mode
-    }
-  }, []);
+  const [sidebarViewByTerminalTab, setSidebarViewByTerminalTab] = useState<
+    Record<number, SidebarViewId>
+  >({});
+  const activeTerminalTabId = activeTerminalTab?.id ?? null;
+  const sidebarView =
+    activeTerminalTabId !== null
+      ? (sidebarViewByTerminalTab[activeTerminalTabId] ?? "explorer")
+      : "explorer";
+  const setActiveTerminalSidebarView = useCallback(
+    (view: SidebarViewId) => {
+      if (activeTerminalTabId === null) return;
+      setSidebarViewByTerminalTab((current) =>
+        current[activeTerminalTabId] === view
+          ? current
+          : { ...current, [activeTerminalTabId]: view },
+      );
+    },
+    [activeTerminalTabId],
+  );
   const toggleSidebar = useCallback(() => {
     setSidebarCollapsed((collapsed) => !collapsed);
   }, []);
@@ -472,16 +468,16 @@ export default function App() {
     (view: SidebarViewId) => {
       if (sidebarCollapsed) {
         setSidebarCollapsed(false);
-        if (view !== sidebarView) persistSidebarView(view);
+        if (view !== sidebarView) setActiveTerminalSidebarView(view);
         return;
       }
       if (view === sidebarView) {
         setSidebarCollapsed(true);
         return;
       }
-      persistSidebarView(view);
+      setActiveTerminalSidebarView(view);
     },
-    [persistSidebarView, sidebarCollapsed, sidebarView],
+    [setActiveTerminalSidebarView, sidebarCollapsed, sidebarView],
   );
   const persistSidebarWidth = useCallback((next: number) => {
     sidebarWidthRef.current = next;
@@ -509,7 +505,8 @@ export default function App() {
     const explorer = explorerRef.current;
     if (sidebarView !== "explorer" || sidebarCollapsed) {
       if (sidebarCollapsed) setSidebarCollapsed(false);
-      if (sidebarView !== "explorer") persistSidebarView("explorer");
+      if (sidebarView !== "explorer")
+        setActiveTerminalSidebarView("explorer");
       const active = document.activeElement;
       explorerReturnFocusRef.current =
         active instanceof HTMLElement && active !== document.body
@@ -533,7 +530,7 @@ export default function App() {
     explorerReturnFocusRef.current =
       active instanceof HTMLElement && active !== document.body ? active : null;
     explorer.focus();
-  }, [persistSidebarView, sidebarCollapsed, sidebarView]);
+  }, [setActiveTerminalSidebarView, sidebarCollapsed, sidebarView]);
 
   const [home, setHome] = useState<string | null>(null);
   const [pendingCloseTab, setPendingCloseTab] = useState<number | null>(null);
@@ -1926,6 +1923,24 @@ export default function App() {
     for (const k of [...terminalRefs.current.keys()])
       if (!live.has(k)) terminalRefs.current.delete(k);
   }, [tabs]);
+  useEffect(() => {
+    const liveTerminalTabs = new Set(
+      tabs.filter((t) => t.kind === "terminal").map((t) => t.id),
+    );
+    setSidebarViewByTerminalTab((current) => {
+      let changed = false;
+      const next: Record<number, SidebarViewId> = {};
+      for (const [key, view] of Object.entries(current)) {
+        const tabId = Number(key);
+        if (liveTerminalTabs.has(tabId)) {
+          next[tabId] = view;
+        } else {
+          changed = true;
+        }
+      }
+      return changed ? next : current;
+    });
+  }, [tabs]);
 
   const handleClose = useCallback(
     async (id: number) => {
@@ -2092,15 +2107,11 @@ export default function App() {
 
   const openHostShell = useCallback(
     (host: HostProfile) => {
-      const { leafId, reused } = newHostShellTab(
+      const { leafId } = newHostShellTab(
         inheritedCwdForNewTab(),
         host.name,
         host.id,
       );
-      if (reused) {
-        setTimeout(() => terminalRefs.current.get(leafId)?.focus(), 0);
-        return;
-      }
       void (async () => {
         const passwordPromise =
           host.authMode === "password"
@@ -2131,6 +2142,13 @@ export default function App() {
           ) ?? null),
     [hosts, selectedHostSource],
   );
+  const activeTerminalHost = useMemo(() => {
+    if (!activeTerminalTab?.hostId) return null;
+    return hosts.find((host) => host.id === activeTerminalTab.hostId) ?? null;
+  }, [activeTerminalTab?.hostId, hosts]);
+  const activeTerminalHostSource: HostSourceValue = activeTerminalHost
+    ? sourceForHost(activeTerminalHost.id)
+    : "local";
 
   const selectHostSource = useCallback(
     (source: HostSourceValue) => {
@@ -2284,19 +2302,28 @@ export default function App() {
       ),
     [tabs],
   );
-  const sourceControlActive = hasOpenGitTab || sidebarView === "source-control";
-  // Stable per-session path so switching tabs / cd-ing in a shell does NOT
-  // re-fire git IPC for the badge. The active panel resolves the current
-  // context path on its own when the user actually opens git.
+  const sourceControlActive =
+    isTerminalTab || hasOpenGitTab || sidebarView === "source-control";
+  // Non-terminal screens keep the old stable badge path. Terminal tabs need
+  // their own context so Files/Source Control availability follows the tab.
   const badgeContextPath = workspaceFallbackPath;
-  const sourceControlPath = sourceControlActive
-    ? sourceControlContextPath
-    : badgeContextPath;
+  const sourceControlPath = activeTerminalHost
+    ? null
+    : sourceControlActive
+      ? sourceControlContextPath
+      : badgeContextPath;
   const sourceControl = useSourceControl(sourceControlPath, true);
+  const hasSourceControlContent =
+    !activeTerminalHost && sourceControl.hasRepo;
+  const effectiveSidebarView =
+    hasSourceControlContent && sidebarView === "source-control"
+      ? "source-control"
+      : "explorer";
 
   const toggleSourceControl = useCallback(() => {
+    if (!hasSourceControlContent) return;
     cycleSidebarView("source-control");
-  }, [cycleSidebarView]);
+  }, [cycleSidebarView, hasSourceControlContent]);
 
   const openGitGraphFromContext = useCallback(async () => {
     const known = sourceControl.hasRepo ? sourceControl.repo : null;
@@ -2681,6 +2708,8 @@ export default function App() {
   );
 
   const activeCwd = activeTerminalLeafCwd;
+  const terminalExplorerRoot =
+    activeTerminalLeafCwd ?? activeTerminalTab?.cwd ?? explorerRoot;
 
   useEffect(() => {
     const findCwd = () => {
@@ -2916,12 +2945,12 @@ export default function App() {
               <TerminalHostToolbar
                 onToggleSidebar={toggleSidebar}
                 hosts={hosts}
-                selectedHostSource={selectedHostSource}
-                selectedHost={selectedHost}
+                selectedHostSource={activeTerminalHostSource}
+                selectedHost={activeTerminalHost}
                 onSelectHostSource={selectHostSource}
                 onCreateHost={() => setCreatingHost(true)}
                 onEditHost={() => {
-                  if (selectedHost) setEditingHost(selectedHost);
+                  if (activeTerminalHost) setEditingHost(activeTerminalHost);
                 }}
               />
             ) : null}
@@ -2943,11 +2972,11 @@ export default function App() {
                   >
                     <div className="flex h-full min-h-0 flex-col border-r border-border/60 bg-card">
                       <div className="min-h-0 flex-1">
-                        {sidebarView === "explorer" ? (
+                        {effectiveSidebarView === "explorer" ? (
                           <HostsPanel
                             ref={explorerRef}
-                            localRootPath={explorerRoot}
-                            selectedHost={selectedHost}
+                            localRootPath={terminalExplorerRoot}
+                            selectedHost={activeTerminalHost}
                             activeFilePath={explorerActiveFilePath}
                             onOpenFile={handleOpenFile}
                             onPathRenamed={handlePathRenamed}
@@ -2957,7 +2986,7 @@ export default function App() {
                             onOpenMarkdownPreview={openMarkdownPreview}
                             onOpenHostTerminal={openHostShell}
                           />
-                        ) : sidebarView === "source-control" ? (
+                        ) : effectiveSidebarView === "source-control" ? (
                           <SourceControlPanel
                             open
                             sourceControl={sourceControl}
@@ -2967,11 +2996,13 @@ export default function App() {
                           />
                         ) : null}
                       </div>
-                      <SidebarRail
-                        activeView={sidebarView}
-                        onSelectView={persistSidebarView}
-                        changedCount={sourceControl.changedCount}
-                      />
+                      {hasSourceControlContent ? (
+                        <SidebarRail
+                          activeView={effectiveSidebarView}
+                          onSelectView={setActiveTerminalSidebarView}
+                          changedCount={sourceControl.changedCount}
+                        />
+                      ) : null}
                     </div>
                   </ResizablePanel>
                   <ResizableHandle withHandle />
