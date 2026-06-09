@@ -9,6 +9,7 @@ import { cn } from "@/lib/utils";
 import { ArrowRight01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { memo, useState } from "react";
+import type { DragEvent, MouseEvent } from "react";
 import { InlineInput } from "./InlineInput";
 import {
   copyToClipboard,
@@ -30,9 +31,28 @@ export type EntryRowProps = {
   rootPath: string;
   tree: Tree;
   isSelected: boolean;
+  isDropTarget?: boolean;
+  isDragSource?: boolean;
   isRenaming: boolean;
   onOpenFile: (path: string, pin?: boolean) => void;
+  onOpenDirectory?: (path: string) => void;
   onSelectPath: (path: string) => void;
+  onDragStartPath?: (path: string, event: DragEvent<HTMLButtonElement>) => void;
+  onDragOverPath?: (
+    path: string,
+    isDir: boolean,
+    event: DragEvent<HTMLButtonElement>,
+  ) => void;
+  onDropOnPath?: (
+    path: string,
+    isDir: boolean,
+    event: DragEvent<HTMLButtonElement>,
+  ) => void;
+  onDragEndPath?: () => void;
+  onCutPath?: (path: string) => void;
+  onCopyPath?: (path: string) => void;
+  onPasteIntoPath?: (path: string, isDir: boolean) => void;
+  canPaste?: boolean;
   onRevealInTerminal?: (path: string) => void;
   onAttachToAgent?: (path: string) => void;
   onOpenMarkdownPreview?: (path: string) => void;
@@ -52,9 +72,20 @@ function EntryRowImpl(props: EntryRowProps) {
     rootPath,
     tree,
     isSelected,
+    isDropTarget,
+    isDragSource,
     isRenaming,
     onOpenFile,
+    onOpenDirectory,
     onSelectPath,
+    onDragStartPath,
+    onDragOverPath,
+    onDropOnPath,
+    onDragEndPath,
+    onCutPath,
+    onCopyPath,
+    onPasteIntoPath,
+    canPaste,
     onRevealInTerminal,
     onAttachToAgent,
     onOpenMarkdownPreview,
@@ -65,11 +96,20 @@ function EntryRowImpl(props: EntryRowProps) {
   const createTarget = isDir ? path : path.slice(0, path.lastIndexOf("/")) || rootPath;
   const paddingLeft = 6 + depth * 12;
 
-  const handleClick = () => {
+  const handleClick = (event: MouseEvent<HTMLButtonElement>) => {
     if (tree.renaming) return;
+    if (event.detail > 1) return;
     onSelectPath(path);
     if (isDir) tree.toggle(path);
-    else onOpenFile(path);
+  };
+
+  const handleDoubleClick = () => {
+    if (tree.renaming) return;
+    if (isDir) {
+      onOpenDirectory?.(path);
+      return;
+    }
+    onOpenFile(path);
   };
 
   return (
@@ -96,11 +136,19 @@ function EntryRowImpl(props: EntryRowProps) {
           <button
             type="button"
             data-fs-path={path}
+            data-fs-is-dir={isDir ? "true" : "false"}
+            draggable
             onClick={handleClick}
-            onDoubleClick={() => !isDir && tree.beginRename(path)}
+            onDoubleClick={handleDoubleClick}
+            onDragStart={(e) => onDragStartPath?.(path, e)}
+            onDragOver={(e) => onDragOverPath?.(path, isDir, e)}
+            onDrop={(e) => onDropOnPath?.(path, isDir, e)}
+            onDragEnd={onDragEndPath}
             className={cn(
               "group flex h-6 w-full min-w-0 cursor-pointer items-center gap-2 rounded-sm px-1.5 text-left text-[13px] text-foreground/85 transition-colors hover:bg-accent/70",
               isSelected && "bg-accent text-foreground",
+              isDropTarget && "bg-primary/15 ring-1 ring-primary/35",
+              isDragSource && "opacity-55",
             )}
             style={{ paddingLeft }}
           >
@@ -174,6 +222,26 @@ function EntryRowImpl(props: EntryRowProps) {
           onSelect={() => tree.beginCreate(createTarget, "dir")}
         >
           New Folder
+        </ContextMenuItem>
+        <ContextMenuSeparator />
+        <ContextMenuItem
+          className={COMPACT_ITEM}
+          onSelect={() => onCutPath?.(path)}
+        >
+          Cut
+        </ContextMenuItem>
+        <ContextMenuItem
+          className={COMPACT_ITEM}
+          onSelect={() => onCopyPath?.(path)}
+        >
+          Copy
+        </ContextMenuItem>
+        <ContextMenuItem
+          className={COMPACT_ITEM}
+          disabled={!canPaste}
+          onSelect={() => onPasteIntoPath?.(path, isDir)}
+        >
+          Paste
         </ContextMenuItem>
         <ContextMenuSeparator />
         <ContextMenuItem

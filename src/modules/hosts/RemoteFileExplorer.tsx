@@ -34,7 +34,10 @@ import {
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import {
+  type DragEvent,
+  type MouseEvent,
   forwardRef,
   useCallback,
   useEffect,
@@ -43,6 +46,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { elementFromDragPosition } from "@/lib/nativeDragDrop";
 
 type ChildrenState =
   | { status: "loading" }
@@ -55,7 +59,26 @@ type PendingCreate = {
   parentPath: string;
 };
 
+type RemoteClipboard = {
+  operation: "copy" | "cut";
+  paths: string[];
+};
+
+type DropTarget = {
+  hoverPath: string;
+  targetDir: string;
+  expandPath: string | null;
+};
+
+const REMOTE_DRAG_MIME = "application/x-omnitab-sftp-file";
+
 type Row =
+  | {
+      kind: "parent";
+      key: string;
+      path: string;
+      depth: number;
+    }
   | {
       kind: "entry";
       key: string;
@@ -81,10 +104,11 @@ type Row =
 type Props = {
   host: HostProfile;
   onOpenTerminal: (host: HostProfile) => void;
+  onChangeWorkingTree?: (path: string) => void;
 };
 
 export const RemoteFileExplorer = forwardRef<FileExplorerHandle, Props>(
-  function RemoteFileExplorer({ host, onOpenTerminal }, ref) {
+  function RemoteFileExplorer({ host, onOpenTerminal, onChangeWorkingTree }, ref) {
     const initialPath = normalizeRootPath(host.remotePath);
     const [rootPath, setRootPath] = useState(initialPath);
     const [pathInput, setPathInput] = useState(initialPath);
@@ -95,14 +119,24 @@ export const RemoteFileExplorer = forwardRef<FileExplorerHandle, Props>(
     const [pendingCreate, setPendingCreate] = useState<PendingCreate | null>(
       null,
     );
+    const [dropTargetPath, setDropTargetPath] = useState<string | null>(null);
+    const [remoteClipboard, setRemoteClipboard] =
+      useState<RemoteClipboard | null>(null);
+    const [dragSourcePaths, setDragSourcePaths] = useState<string[]>([]);
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const containerRef = useRef<HTMLDivElement>(null);
     const selectedPathRef = useRef<string | null>(null);
+    const expandedRef = useRef(expanded);
+    const expandDropTargetTimerRef = useRef<number | null>(null);
 
     useEffect(() => {
       selectedPathRef.current = selectedPath;
     }, [selectedPath]);
+
+    useEffect(() => {
+      expandedRef.current = expanded;
+    }, [expanded]);
 
     const getConfig = useCallback(async (): Promise<SftpHostConfig> => {
       if (host.authMode !== "password") return sftpConfigForHost(host);
@@ -174,6 +208,19 @@ export const RemoteFileExplorer = forwardRef<FileExplorerHandle, Props>(
       [fetchChildren],
     );
 
+    const expandPath = useCallback(
+      (path: string) => {
+        setExpanded((curr) => {
+          if (curr.has(path)) return curr;
+          const next = new Set(curr);
+          next.add(path);
+          return next;
+        });
+        void fetchChildren(path);
+      },
+      [fetchChildren],
+    );
+
     const toggle = useCallback(
       (entry: SftpEntry) => {
         if (!entry.isDir) return;
@@ -214,14 +261,17 @@ export const RemoteFileExplorer = forwardRef<FileExplorerHandle, Props>(
     const runMutation = useCallback(
       async (
         fn: (config: SftpHostConfig) => Promise<void>,
-        refreshPath: string,
+        refreshPath: string | string[],
       ) => {
         setBusy(true);
         setError(null);
         try {
           const config = await getConfig();
           await fn(config);
-          await fetchChildren(refreshPath);
+          const refreshPaths = Array.isArray(refreshPath)
+            ? refreshPath
+            : [refreshPath];
+          for (const path of new Set(refreshPaths)) await fetchChildren(path);
         } catch (e) {
           setError(String(e));
         } finally {
@@ -330,6 +380,57 @@ export const RemoteFileExplorer = forwardRef<FileExplorerHandle, Props>(
       [runMutation],
     );
 
+    const uploadPathsInto = useCallback(
+      async (localPaths: string[], parentPath: string) => {
+        if (localPaths.length === 0) return;
+        await runMutation(
+          (config) =>
+            invoke<void>("sftp_upload_into", {
+              config,
+              localPaths,
+              remoteDir: parentPath,
+            }),
+          parentPath,
+        );
+      },
+      [runMutation],
+    );
+
+    const applyRemoteOperation = useCallback(
+      async (
+        operation: "copy" | "cut",
+        paths: string[],
+        parentPath: string,
+      ) => {
+        if (paths.length === 0) return;
+        const refreshPaths =
+          operation === "cut"
+            ? [parentPath, ...paths.map(parentRemotePath)]
+            : [parentPath];
+        await runMutation(
+          (config) =>
+            invoke<void>(
+              operation === "copy" ? "sftp_copy_into" : "sftp_move_into",
+              {
+                config,
+                remotePaths: paths,
+                remoteDir: parentPath,
+              },
+            ),
+          refreshPaths,
+        );
+        if (operation === "cut") {
+          setRemoteClipboard((curr) =>
+            curr?.operation === "cut" &&
+            curr.paths.every((p) => paths.includes(p))
+              ? null
+              : curr,
+          );
+        }
+      },
+      [runMutation],
+    );
+
     const downloadEntry = useCallback(
       async (entry: SftpEntry) => {
         if (entry.isDir) return;
@@ -352,6 +453,139 @@ export const RemoteFileExplorer = forwardRef<FileExplorerHandle, Props>(
       selectedPath !== null ? entriesByPath.get(selectedPath) ?? null : null;
     const uploadTarget =
       selectedEntry?.isDir === true ? selectedEntry.path : rootPath;
+
+    const targetForEntry = useCallback(
+      (entry: SftpEntry): DropTarget => ({
+        hoverPath: entry.path,
+        targetDir: entry.isDir ? entry.path : parentRemotePath(entry.path),
+        expandPath: entry.isDir ? entry.path : null,
+      }),
+      [],
+    );
+
+    const pasteInto = useCallback(
+      (parentPath: string) => {
+        if (!remoteClipboard) return;
+        void applyRemoteOperation(
+          remoteClipboard.operation,
+          remoteClipboard.paths,
+          parentPath,
+        );
+      },
+      [applyRemoteOperation, remoteClipboard],
+    );
+
+    const clearExpandDropTargetTimer = useCallback(() => {
+      if (expandDropTargetTimerRef.current === null) return;
+      window.clearTimeout(expandDropTargetTimerRef.current);
+      expandDropTargetTimerRef.current = null;
+    }, []);
+
+    useEffect(() => {
+      let disposed = false;
+      let unlisten: (() => void) | null = null;
+
+      const resolveTarget = (position: { x: number; y: number }): DropTarget | null => {
+        const el = elementFromDragPosition(position);
+        const row = el?.closest<HTMLElement>("[data-sftp-path]");
+        if (row?.dataset.sftpPath) {
+          const isDir = row.dataset.sftpIsDir === "true";
+          const path = row.dataset.sftpPath;
+          return {
+            hoverPath: path,
+            targetDir: isDir ? path : parentRemotePath(path),
+            expandPath: isDir ? path : null,
+          };
+        }
+        if (el?.closest("[data-sftp-drop-root]")) {
+          return { hoverPath: rootPath, targetDir: rootPath, expandPath: null };
+        }
+        return null;
+      };
+
+      void getCurrentWebview()
+        .onDragDropEvent((e) => {
+          const p = e.payload;
+          if (p.type === "enter" || p.type === "over") {
+            const target = resolveTarget(p.position);
+            setDropTargetPath(target?.hoverPath ?? null);
+            if (!target) clearExpandDropTargetTimer();
+            return;
+          }
+          if (p.type === "leave") {
+            setDropTargetPath(null);
+            clearExpandDropTargetTimer();
+            return;
+          }
+          if (p.type === "drop") {
+            setDropTargetPath(null);
+            clearExpandDropTargetTimer();
+            if (!p.paths.length) return;
+            const target = resolveTarget(p.position);
+            if (!target) return;
+            void uploadPathsInto(p.paths, target.targetDir);
+          }
+        })
+        .then((fn) => {
+          if (disposed) fn();
+          else unlisten = fn;
+        })
+        .catch((err) => console.error("[omnitab] sftp drop listen failed:", err));
+
+      return () => {
+        disposed = true;
+        setDropTargetPath(null);
+        clearExpandDropTargetTimer();
+        unlisten?.();
+      };
+    }, [
+      clearExpandDropTargetTimer,
+      expandPath,
+      rootPath,
+      uploadPathsInto,
+    ]);
+
+    const handleDragStartEntry = useCallback(
+      (entry: SftpEntry, event: DragEvent<HTMLButtonElement>) => {
+        setSelectedPath(entry.path);
+        const paths = [entry.path];
+        setDragSourcePaths(paths);
+        event.dataTransfer.effectAllowed = "copyMove";
+        event.dataTransfer.setData(REMOTE_DRAG_MIME, JSON.stringify(paths));
+        event.dataTransfer.setData("text/plain", entry.path);
+      },
+      [],
+    );
+
+    const handleDragOverTarget = useCallback(
+      (target: DropTarget, event: DragEvent<HTMLElement>) => {
+        if (!event.dataTransfer.types.includes(REMOTE_DRAG_MIME)) return;
+        event.preventDefault();
+        event.stopPropagation();
+        event.dataTransfer.dropEffect = event.altKey ? "copy" : "move";
+        setDropTargetPath(target.hoverPath);
+      },
+      [],
+    );
+
+    const handleDropTarget = useCallback(
+      (target: DropTarget, event: DragEvent<HTMLElement>) => {
+        if (!event.dataTransfer.types.includes(REMOTE_DRAG_MIME)) return;
+        event.preventDefault();
+        event.stopPropagation();
+        setDropTargetPath(null);
+        clearExpandDropTargetTimer();
+        const raw = event.dataTransfer.getData(REMOTE_DRAG_MIME);
+        const paths = raw ? (JSON.parse(raw) as string[]) : dragSourcePaths;
+        void applyRemoteOperation(
+          event.altKey ? "copy" : "cut",
+          paths,
+          target.targetDir,
+        );
+        setDragSourcePaths([]);
+      },
+      [applyRemoteOperation, clearExpandDropTargetTimer, dragSourcePaths],
+    );
 
     useImperativeHandle(
       ref,
@@ -376,6 +610,47 @@ export const RemoteFileExplorer = forwardRef<FileExplorerHandle, Props>(
     );
 
     const renderRow = (row: Row) => {
+      if (row.kind === "parent") {
+        return (
+          <button
+            type="button"
+            data-sftp-path={row.path}
+            data-sftp-is-dir="true"
+            className="group flex h-6 w-full min-w-0 cursor-pointer items-center gap-2 rounded-sm px-1.5 text-left text-[13px] text-foreground/85 transition-colors hover:bg-accent/70"
+            style={{ paddingLeft: 6 + row.depth * 12 }}
+            onClick={(event) => {
+              if (event.detail > 1) return;
+              openRoot(row.path);
+              onChangeWorkingTree?.(row.path);
+            }}
+            onDoubleClick={() => {
+              openRoot(row.path);
+              onChangeWorkingTree?.(row.path);
+            }}
+            onDragOver={(e) =>
+              handleDragOverTarget(
+                { hoverPath: row.path, targetDir: row.path, expandPath: null },
+                e,
+              )
+            }
+            onDrop={(e) =>
+              handleDropTarget(
+                { hoverPath: row.path, targetDir: row.path, expandPath: null },
+                e,
+              )
+            }
+          >
+            <span className="size-3.5 shrink-0" />
+            <img
+              src={folderIconUrl("..", false)}
+              alt=""
+              className="size-4 shrink-0"
+            />
+            <span className="min-w-0 flex-1 truncate">..</span>
+          </button>
+        );
+      }
+
       if (row.kind === "pending") {
         return (
           <div
@@ -422,6 +697,18 @@ export const RemoteFileExplorer = forwardRef<FileExplorerHandle, Props>(
         : fileIconUrl(entry.name);
       const paddingLeft = 6 + row.depth * 12;
 
+      const handleEntryClick = (event: MouseEvent<HTMLButtonElement>) => {
+        if (event.detail > 1) return;
+        setSelectedPath(entry.path);
+        if (entry.isDir) toggle(entry);
+      };
+
+      const handleEntryDoubleClick = () => {
+        if (!entry.isDir) return;
+        openRoot(entry.path);
+        onChangeWorkingTree?.(entry.path);
+      };
+
       return (
         <ContextMenu>
           <ContextMenuTrigger asChild>
@@ -441,15 +728,27 @@ export const RemoteFileExplorer = forwardRef<FileExplorerHandle, Props>(
             ) : (
               <button
                 type="button"
+                data-sftp-path={entry.path}
+                data-sftp-is-dir={entry.isDir ? "true" : "false"}
+                draggable
+                onDragStart={(e) => handleDragStartEntry(entry, e)}
+                onDragOver={(e) => handleDragOverTarget(targetForEntry(entry), e)}
+                onDrop={(e) => handleDropTarget(targetForEntry(entry), e)}
+                onDragEnd={() => {
+                  setDragSourcePaths([]);
+                  setDropTargetPath(null);
+                  clearExpandDropTargetTimer();
+                }}
+                onDoubleClick={handleEntryDoubleClick}
                 className={cn(
                   "group flex h-6 w-full min-w-0 cursor-pointer items-center gap-2 rounded-sm px-1.5 text-left text-[13px] text-foreground/85 transition-colors hover:bg-accent/70",
                   isSelected && "bg-accent text-foreground",
+                  dropTargetPath === entry.path &&
+                    "bg-primary/15 ring-1 ring-primary/35",
+                  dragSourcePaths.includes(entry.path) && "opacity-55",
                 )}
                 style={{ paddingLeft }}
-                onClick={() => {
-                  setSelectedPath(entry.path);
-                  if (entry.isDir) toggle(entry);
-                }}
+                onClick={handleEntryClick}
               >
                 <span className="flex size-3.5 shrink-0 items-center justify-center text-muted-foreground">
                   {entry.isDir ? (
@@ -508,6 +807,30 @@ export const RemoteFileExplorer = forwardRef<FileExplorerHandle, Props>(
             <ContextMenuSeparator />
             <ContextMenuItem
               className={COMPACT_ITEM}
+              onSelect={() =>
+                setRemoteClipboard({ operation: "cut", paths: [entry.path] })
+              }
+            >
+              Cut
+            </ContextMenuItem>
+            <ContextMenuItem
+              className={COMPACT_ITEM}
+              onSelect={() =>
+                setRemoteClipboard({ operation: "copy", paths: [entry.path] })
+              }
+            >
+              Copy
+            </ContextMenuItem>
+            <ContextMenuItem
+              className={COMPACT_ITEM}
+              disabled={!remoteClipboard}
+              onSelect={() => pasteInto(targetForEntry(entry).targetDir)}
+            >
+              Paste
+            </ContextMenuItem>
+            <ContextMenuSeparator />
+            <ContextMenuItem
+              className={COMPACT_ITEM}
               onSelect={() => setRenaming(entry.path)}
             >
               Rename
@@ -529,6 +852,33 @@ export const RemoteFileExplorer = forwardRef<FileExplorerHandle, Props>(
         ref={containerRef}
         className="flex h-full min-h-0 flex-col outline-none"
         tabIndex={0}
+        onKeyDown={(e) => {
+          const active = document.activeElement as HTMLElement | null;
+          if (
+            active?.tagName === "INPUT" ||
+            active?.tagName === "TEXTAREA" ||
+            active?.isContentEditable
+          ) {
+            return;
+          }
+          if (!(e.metaKey || e.ctrlKey)) return;
+          if ((e.key === "x" || e.key === "X") && selectedEntry) {
+            e.preventDefault();
+            setRemoteClipboard({ operation: "cut", paths: [selectedEntry.path] });
+            return;
+          }
+          if ((e.key === "c" || e.key === "C") && selectedEntry) {
+            e.preventDefault();
+            setRemoteClipboard({ operation: "copy", paths: [selectedEntry.path] });
+            return;
+          }
+          if ((e.key === "v" || e.key === "V") && remoteClipboard) {
+            e.preventDefault();
+            pasteInto(
+              selectedEntry ? targetForEntry(selectedEntry).targetDir : rootPath,
+            );
+          }
+        }}
       >
         <div className="grid shrink-0 gap-2 border-b border-border/60 px-2 py-2">
           <div className="flex min-w-0 items-center gap-1.5">
@@ -608,7 +958,25 @@ export const RemoteFileExplorer = forwardRef<FileExplorerHandle, Props>(
 
         <ContextMenu>
           <ContextMenuTrigger asChild>
-            <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden px-1 py-1 [scrollbar-gutter:stable]">
+            <div
+              data-sftp-drop-root
+              onDragOver={(e) =>
+                handleDragOverTarget(
+                  { hoverPath: rootPath, targetDir: rootPath, expandPath: null },
+                  e,
+                )
+              }
+              onDrop={(e) =>
+                handleDropTarget(
+                  { hoverPath: rootPath, targetDir: rootPath, expandPath: null },
+                  e,
+                )
+              }
+              className={cn(
+                "min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden px-1 py-1 [scrollbar-gutter:stable]",
+                dropTargetPath === rootPath && "bg-primary/[0.06]",
+              )}
+            >
               {rows.length === 0 ? (
                 <div className="px-3 py-8 text-center text-xs text-muted-foreground">
                   Loading
@@ -624,6 +992,14 @@ export const RemoteFileExplorer = forwardRef<FileExplorerHandle, Props>(
               onSelect={() => onOpenTerminal(host)}
             >
               SSH Terminal
+            </ContextMenuItem>
+            <ContextMenuSeparator />
+            <ContextMenuItem
+              className={COMPACT_ITEM}
+              disabled={!remoteClipboard}
+              onSelect={() => pasteInto(rootPath)}
+            >
+              Paste
             </ContextMenuItem>
             <ContextMenuSeparator />
             <ContextMenuItem
@@ -685,6 +1061,12 @@ function buildRows(
   pendingCreate: PendingCreate | null,
 ): Row[] {
   const rows: Row[] = [];
+  rows.push({
+    kind: "parent",
+    key: `parent:${rootPath}`,
+    path: parentRemotePath(rootPath),
+    depth: 0,
+  });
 
   const walk = (parentPath: string, depth: number) => {
     const state = nodes[parentPath];

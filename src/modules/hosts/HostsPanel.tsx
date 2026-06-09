@@ -39,6 +39,7 @@ type Props = {
   onOpenFile: (path: string, pin?: boolean) => void;
   onPathRenamed?: (from: string, to: string) => void;
   onPathDeleted?: (path: string) => void;
+  onChangeWorkingTree?: (path: string) => void;
   onRevealInTerminal?: (path: string) => void;
   onAttachToAgent?: (path: string) => void;
   onOpenMarkdownPreview?: (path: string) => void;
@@ -64,6 +65,7 @@ export const HostsPanel = forwardRef<FileExplorerHandle, Props>(
       onOpenFile,
       onPathRenamed,
       onPathDeleted,
+      onChangeWorkingTree,
       onRevealInTerminal,
       onAttachToAgent,
       onOpenMarkdownPreview,
@@ -101,6 +103,7 @@ export const HostsPanel = forwardRef<FileExplorerHandle, Props>(
               ref={remoteExplorerRef}
               host={selectedHost}
               onOpenTerminal={onOpenHostTerminal}
+              onChangeWorkingTree={onChangeWorkingTree}
             />
           ) : (
             <FileExplorer
@@ -110,6 +113,7 @@ export const HostsPanel = forwardRef<FileExplorerHandle, Props>(
               onOpenFile={onOpenFile}
               onPathRenamed={onPathRenamed}
               onPathDeleted={onPathDeleted}
+              onChangeWorkingTree={onChangeWorkingTree}
               onRevealInTerminal={onRevealInTerminal}
               onAttachToAgent={onAttachToAgent}
               onOpenMarkdownPreview={onOpenMarkdownPreview}

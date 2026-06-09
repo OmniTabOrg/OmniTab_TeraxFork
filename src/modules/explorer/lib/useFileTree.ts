@@ -362,6 +362,33 @@ export function useFileTree(rootPath: string | null, options?: Options) {
     [fetchChildren, options],
   );
 
+  const copyInto = useCallback(
+    async (sources: string[], destinationDir: string) => {
+      if (sources.length === 0) return;
+      await invoke("fs_copy_into", {
+        sources,
+        destinationDir,
+        workspace: currentWorkspaceEnv(),
+      });
+      await fetchChildren(destinationDir);
+    },
+    [fetchChildren],
+  );
+
+  const moveInto = useCallback(
+    async (sources: string[], destinationDir: string) => {
+      if (sources.length === 0) return;
+      await invoke("fs_move_into", {
+        sources,
+        destinationDir,
+        workspace: currentWorkspaceEnv(),
+      });
+      const refresh = new Set([destinationDir, ...sources.map(dirname)]);
+      for (const path of refresh) await fetchChildren(path);
+    },
+    [fetchChildren],
+  );
+
   return {
     nodes,
     expanded,
@@ -377,6 +404,8 @@ export function useFileTree(rootPath: string | null, options?: Options) {
     cancelRename,
     commitRename,
     deletePath,
+    copyInto,
+    moveInto,
     joinPath,
   };
 }

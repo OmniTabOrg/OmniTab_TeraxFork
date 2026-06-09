@@ -1,4 +1,5 @@
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -16,6 +17,7 @@ import {
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
+  type DragEvent,
   forwardRef,
   useCallback,
   useEffect,
@@ -32,6 +34,8 @@ import { fileIconUrl, folderIconUrl } from "./lib/iconResolver";
 import { COMPACT_CONTENT, COMPACT_ITEM } from "./lib/menuItemClass";
 import { useFileTree } from "./lib/useFileTree";
 import { useGlobalShortcuts } from "@/modules/shortcuts";
+import { elementFromDragPosition } from "@/lib/nativeDragDrop";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 
 export type FileExplorerHandle = {
   focus: () => void;
@@ -45,12 +49,19 @@ type Props = {
   onOpenFile: (path: string, pin?: boolean) => void;
   onPathRenamed?: (from: string, to: string) => void;
   onPathDeleted?: (path: string) => void;
+  onChangeWorkingTree?: (path: string) => void;
   onRevealInTerminal?: (path: string) => void;
   onAttachToAgent?: (path: string) => void;
   onOpenMarkdownPreview?: (path: string) => void;
 };
 
 type Row =
+  | {
+      kind: "parent";
+      key: string;
+      path: string;
+      depth: number;
+    }
   | {
       kind: "entry";
       key: string;
@@ -66,10 +77,28 @@ type Row =
 
 const ROW_HEIGHT = 24;
 const OVERSCAN = 8;
+const LOCAL_DRAG_MIME = "application/x-omnitab-local-file";
+
+type FileClipboard = {
+  operation: "copy" | "cut";
+  paths: string[];
+};
+
+type DropTarget = {
+  hoverPath: string;
+  targetDir: string;
+  expandPath: string | null;
+};
 
 function basename(path: string): string {
   const parts = path.split(/[\\/]/).filter(Boolean);
   return parts.length ? parts[parts.length - 1] : path;
+}
+
+function parentPath(path: string, fallback: string): string {
+  const idx = path.lastIndexOf("/");
+  if (idx <= 0) return fallback;
+  return path.slice(0, idx);
 }
 
 function buildRows(
@@ -78,6 +107,12 @@ function buildRows(
 ): { rows: Row[]; entryIndexByPath: Map<string, number> } {
   const rows: Row[] = [];
   const entryIndexByPath = new Map<string, number>();
+  rows.push({
+    kind: "parent",
+    key: `parent:${rootPath}`,
+    path: parentPath(rootPath, rootPath),
+    depth: 0,
+  });
 
   const walk = (parent: string, depth: number) => {
     const node = tree.nodes[parent];
@@ -153,6 +188,7 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(
       onOpenFile,
       onPathRenamed,
       onPathDeleted,
+      onChangeWorkingTree,
       onRevealInTerminal,
       onAttachToAgent,
       onOpenMarkdownPreview,
@@ -163,9 +199,21 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(
     const [selectedPath, setSelectedPath] = useState<string | null>(null);
     const [isSearchOpen, setIsSearchOpen] = useState(false);
     const [isSearchActive, setIsSearchActive] = useState(false);
+    const [dropTargetPath, setDropTargetPath] = useState<string | null>(null);
+    const [dropError, setDropError] = useState<string | null>(null);
+    const [fileClipboard, setFileClipboard] =
+      useState<FileClipboard | null>(null);
+    const [dragSourcePaths, setDragSourcePaths] = useState<string[]>([]);
     const searchRef = useRef<ExplorerSearchHandle>(null);
     const containerRef = useRef<HTMLDivElement>(null);
     const scrollRef = useRef<HTMLDivElement>(null);
+    const expandedRef = useRef(tree.expanded);
+    const expandDropTargetTimerRef = useRef<number | null>(null);
+    const currentRootPath = rootPath ?? "";
+
+    useEffect(() => {
+      expandedRef.current = tree.expanded;
+    }, [tree.expanded]);
 
     const { rows, entryIndexByPath } = useMemo(() => {
       if (!rootPath) return { rows: [] as Row[], entryIndexByPath: new Map<string, number>() };
@@ -183,6 +231,174 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(
         setSelectedPath(null);
       }
     }, [entryIndexByPath, selectedPath]);
+
+    const clearExpandDropTargetTimer = useCallback(() => {
+      if (expandDropTargetTimerRef.current === null) return;
+      window.clearTimeout(expandDropTargetTimerRef.current);
+      expandDropTargetTimerRef.current = null;
+    }, []);
+
+    useEffect(() => {
+      if (!rootPath) return;
+      let disposed = false;
+      let unlisten: (() => void) | null = null;
+
+      const resolveTarget = (position: { x: number; y: number }): DropTarget | null => {
+        const el = elementFromDragPosition(position);
+        const row = el?.closest<HTMLElement>("[data-fs-path]");
+        if (row?.dataset.fsPath) {
+          const isDir = row.dataset.fsIsDir === "true";
+          const path = row.dataset.fsPath;
+          return {
+            hoverPath: path,
+            targetDir: isDir ? path : parentPath(path, rootPath),
+            expandPath: isDir ? path : null,
+          };
+        }
+        if (el?.closest("[data-fs-drop-root]")) {
+          return { hoverPath: rootPath, targetDir: rootPath, expandPath: null };
+        }
+        return null;
+      };
+
+      void getCurrentWebview()
+        .onDragDropEvent((e) => {
+          const p = e.payload;
+          if (p.type === "enter" || p.type === "over") {
+            const target = resolveTarget(p.position);
+            setDropTargetPath(target?.hoverPath ?? null);
+            if (!target) clearExpandDropTargetTimer();
+            return;
+          }
+          if (p.type === "leave") {
+            setDropTargetPath(null);
+            clearExpandDropTargetTimer();
+            return;
+          }
+          if (p.type === "drop") {
+            setDropTargetPath(null);
+            clearExpandDropTargetTimer();
+            if (!p.paths.length) return;
+            const target = resolveTarget(p.position);
+            if (!target) return;
+            setDropError(null);
+            void tree.copyInto(p.paths, target.targetDir).catch((err) => {
+              setDropError(String(err));
+            });
+          }
+        })
+        .then((fn) => {
+          if (disposed) fn();
+          else unlisten = fn;
+        })
+        .catch((err) => console.error("[omnitab] explorer drop listen failed:", err));
+
+      return () => {
+        disposed = true;
+        setDropTargetPath(null);
+        clearExpandDropTargetTimer();
+        unlisten?.();
+      };
+    }, [clearExpandDropTargetTimer, rootPath, tree.expand, tree.copyInto]);
+
+    const targetForPath = useCallback(
+      (path: string, isDir?: boolean): DropTarget => {
+        const idx = entryIndexByPath.get(path);
+        const row = idx === undefined ? null : rows[idx];
+        const dir =
+          isDir ??
+          (row?.kind === "entry" || row?.kind === "rename" ? row.isDir : false);
+        return {
+          hoverPath: path,
+          targetDir: dir ? path : parentPath(path, currentRootPath),
+          expandPath: dir ? path : null,
+        };
+      },
+      [currentRootPath, entryIndexByPath, rows],
+    );
+
+    const applyFileOperation = useCallback(
+      async (
+        operation: "copy" | "cut",
+        paths: string[],
+        destinationDir: string,
+      ) => {
+        if (paths.length === 0) return;
+        setDropError(null);
+        try {
+          if (operation === "copy") {
+            await tree.copyInto(paths, destinationDir);
+          } else {
+            await tree.moveInto(paths, destinationDir);
+            setFileClipboard((curr) =>
+              curr?.operation === "cut" && curr.paths.every((p) => paths.includes(p))
+                ? null
+                : curr,
+            );
+          }
+        } catch (err) {
+          setDropError(String(err));
+        }
+      },
+      [tree.copyInto, tree.moveInto],
+    );
+
+    const pasteInto = useCallback(
+      (destinationDir: string) => {
+        if (!fileClipboard) return;
+        void applyFileOperation(
+          fileClipboard.operation,
+          fileClipboard.paths,
+          destinationDir,
+        );
+      },
+      [applyFileOperation, fileClipboard],
+    );
+
+    const handleDragStartPath = useCallback(
+      (path: string, event: DragEvent<HTMLButtonElement>) => {
+        setSelectedPath(path);
+        const paths = [path];
+        setDragSourcePaths(paths);
+        event.dataTransfer.effectAllowed = "copyMove";
+        event.dataTransfer.setData(LOCAL_DRAG_MIME, JSON.stringify(paths));
+        event.dataTransfer.setData("text/plain", path);
+      },
+      [],
+    );
+
+    const handleDragOverTarget = useCallback(
+      (
+        target: DropTarget,
+        event: DragEvent<HTMLElement>,
+      ) => {
+        if (!event.dataTransfer.types.includes(LOCAL_DRAG_MIME)) return;
+        event.preventDefault();
+        event.stopPropagation();
+        event.dataTransfer.dropEffect = event.altKey ? "copy" : "move";
+        setDropTargetPath(target.hoverPath);
+      },
+      [],
+    );
+
+    const handleDropTarget = useCallback(
+      (target: DropTarget, event: DragEvent<HTMLElement>) => {
+        if (!event.dataTransfer.types.includes(LOCAL_DRAG_MIME)) return;
+        event.preventDefault();
+        event.stopPropagation();
+        setDropTargetPath(null);
+        clearExpandDropTargetTimer();
+        const raw = event.dataTransfer.getData(LOCAL_DRAG_MIME);
+        const paths = raw ? (JSON.parse(raw) as string[]) : dragSourcePaths;
+        void applyFileOperation(
+          event.altKey ? "copy" : "cut",
+          paths,
+          target.targetDir,
+        );
+        setDragSourcePaths([]);
+      },
+      [applyFileOperation, clearExpandDropTargetTimer, dragSourcePaths],
+    );
 
     const virtualizer = useVirtualizer({
       count: rows.length,
@@ -288,6 +504,28 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(
       };
 
       switch (e.key) {
+        case "x":
+        case "X": {
+          if (!(e.metaKey || e.ctrlKey) || !selectedPath) break;
+          e.preventDefault();
+          setFileClipboard({ operation: "cut", paths: [selectedPath] });
+          break;
+        }
+        case "c":
+        case "C": {
+          if (!(e.metaKey || e.ctrlKey) || !selectedPath) break;
+          e.preventDefault();
+          setFileClipboard({ operation: "copy", paths: [selectedPath] });
+          break;
+        }
+        case "v":
+        case "V": {
+          if (!(e.metaKey || e.ctrlKey) || !fileClipboard) break;
+          e.preventDefault();
+          if (selectedPath) pasteInto(targetForPath(selectedPath).targetDir);
+          else pasteInto(rootPath);
+          break;
+        }
         case "ArrowDown":
           e.preventDefault();
           move(currentIdx < 0 ? 0 : currentIdx + 1);
@@ -343,6 +581,41 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(
 
     const renderRow = (row: Row) => {
       switch (row.kind) {
+        case "parent":
+          return (
+            <button
+              type="button"
+              data-fs-path={row.path}
+              data-fs-is-dir="true"
+              className="group flex h-6 w-full min-w-0 cursor-pointer items-center gap-2 rounded-sm px-1.5 text-left text-[13px] text-foreground/85 transition-colors hover:bg-accent/70"
+              style={{ paddingLeft: 6 + row.depth * 12 }}
+              onClick={(event) => {
+                if (event.detail > 1) return;
+                onChangeWorkingTree?.(row.path);
+              }}
+              onDoubleClick={() => onChangeWorkingTree?.(row.path)}
+              onDragOver={(e) =>
+                handleDragOverTarget(
+                  { hoverPath: row.path, targetDir: row.path, expandPath: null },
+                  e,
+                )
+              }
+              onDrop={(e) =>
+                handleDropTarget(
+                  { hoverPath: row.path, targetDir: row.path, expandPath: null },
+                  e,
+                )
+              }
+            >
+              <span className="size-3.5 shrink-0" />
+              <img
+                src={folderIconUrl("..", false)}
+                alt=""
+                className="size-4 shrink-0"
+              />
+              <span className="min-w-0 flex-1 truncate">..</span>
+            </button>
+          );
         case "entry":
         case "rename": {
           return (
@@ -355,9 +628,34 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(
               rootPath={rootPath}
               tree={tree}
               isSelected={selectedPath === row.path}
+              isDropTarget={dropTargetPath === row.path}
+              isDragSource={dragSourcePaths.includes(row.path)}
               isRenaming={row.kind === "rename"}
               onOpenFile={onOpenFile}
+              onOpenDirectory={onChangeWorkingTree}
               onSelectPath={setSelectedPath}
+              onDragStartPath={handleDragStartPath}
+              onDragOverPath={(path, isDir, event) =>
+                handleDragOverTarget(targetForPath(path, isDir), event)
+              }
+              onDropOnPath={(path, isDir, event) =>
+                handleDropTarget(targetForPath(path, isDir), event)
+              }
+              onDragEndPath={() => {
+                setDragSourcePaths([]);
+                setDropTargetPath(null);
+                clearExpandDropTargetTimer();
+              }}
+              onCutPath={(path) =>
+                setFileClipboard({ operation: "cut", paths: [path] })
+              }
+              onCopyPath={(path) =>
+                setFileClipboard({ operation: "copy", paths: [path] })
+              }
+              onPasteIntoPath={(path, isDir) =>
+                pasteInto(targetForPath(path, isDir).targetDir)
+              }
+              canPaste={fileClipboard !== null}
               onRevealInTerminal={onRevealInTerminal}
               onAttachToAgent={onAttachToAgent}
               onOpenMarkdownPreview={onOpenMarkdownPreview}
@@ -453,12 +751,34 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(
           onAttachToAgent={onAttachToAgent}
         />
 
+        {dropError ? (
+          <div className="shrink-0 border-b border-destructive/20 bg-destructive/10 px-2 py-1 text-[11px] text-destructive">
+            {dropError}
+          </div>
+        ) : null}
+
         {!isSearchActive ? (
           <ContextMenu>
             <ContextMenuTrigger asChild>
               <div
                 ref={scrollRef}
-                className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden [scrollbar-gutter:stable]"
+                data-fs-drop-root
+                onDragOver={(e) =>
+                  handleDragOverTarget(
+                    { hoverPath: rootPath, targetDir: rootPath, expandPath: null },
+                    e,
+                  )
+                }
+                onDrop={(e) =>
+                  handleDropTarget(
+                    { hoverPath: rootPath, targetDir: rootPath, expandPath: null },
+                    e,
+                  )
+                }
+                className={cn(
+                  "min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden [scrollbar-gutter:stable]",
+                  dropTargetPath === rootPath && "bg-primary/[0.06]",
+                )}
               >
                 {pendingAtRoot ? (
                   <div
@@ -546,6 +866,14 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(
                 onSelect={() => void revealInFinder(rootPath)}
               >
                 Reveal in Finder
+              </ContextMenuItem>
+              <ContextMenuSeparator />
+              <ContextMenuItem
+                className={COMPACT_ITEM}
+                disabled={!fileClipboard}
+                onSelect={() => pasteInto(rootPath)}
+              >
+                Paste
               </ContextMenuItem>
               <ContextMenuSeparator />
               <ContextMenuItem

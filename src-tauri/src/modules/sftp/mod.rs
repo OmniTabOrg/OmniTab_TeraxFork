@@ -10,7 +10,7 @@ const LEGACY_RSA_OPTIONS: [&str; 2] = [
     "PubkeyAcceptedKeyTypes=+ssh-rsa",
 ];
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SftpHostConfig {
     hostname: String,
@@ -113,10 +113,160 @@ pub async fn sftp_upload(
     Ok(())
 }
 
+#[tauri::command]
+pub async fn sftp_upload_into(
+    config: SftpHostConfig,
+    local_paths: Vec<String>,
+    remote_dir: String,
+) -> Result<(), String> {
+    if local_paths.is_empty() {
+        return Err("no local paths provided".to_string());
+    }
+    let remote_dir = validate_path("remote path", remote_dir)?;
+    let mut commands = Vec::new();
+    let mut top_level_names = std::collections::HashSet::new();
+    for local_path in local_paths {
+        let local_path = validate_path("local path", local_path)?;
+        let source = PathBuf::from(&local_path);
+        if !source.exists() {
+            return Err(format!("not found: {}", source.display()));
+        }
+        let name = source
+            .file_name()
+            .and_then(|v| v.to_str())
+            .ok_or_else(|| format!("local path must include a file name: {}", source.display()))?;
+        if !top_level_names.insert(name.to_string()) {
+            return Err(format!("duplicate dropped item name: {name}"));
+        }
+        let remote_path = join_remote_path(&remote_dir, name);
+        collect_upload_commands(&source, &remote_path, &mut commands)?;
+    }
+    run_sftp(config, commands).await?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn sftp_move_into(
+    config: SftpHostConfig,
+    remote_paths: Vec<String>,
+    remote_dir: String,
+) -> Result<(), String> {
+    let commands = collect_move_commands(remote_paths, remote_dir)?;
+    run_sftp(config, commands).await?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn sftp_copy_into(
+    config: SftpHostConfig,
+    remote_paths: Vec<String>,
+    remote_dir: String,
+) -> Result<(), String> {
+    if remote_paths.is_empty() {
+        return Err("no remote paths provided".to_string());
+    }
+    let remote_dir = validate_path("remote path", remote_dir)?;
+    let temp = TempDir::new().map_err(|e| format!("failed to create temp dir: {e}"))?;
+    let mut download_commands = Vec::new();
+    let mut local_sources = Vec::new();
+    let mut top_level_names = std::collections::HashSet::new();
+    for remote_path in remote_paths {
+        let remote_path = validate_path("remote path", remote_path)?;
+        let name = remote_basename(&remote_path)?;
+        if !top_level_names.insert(name.to_string()) {
+            return Err(format!("duplicate copied item name: {name}"));
+        }
+        let local_path = temp.path().join(name);
+        download_commands.push(format!(
+            "get -Pr {} {}",
+            quote_batch_path(&remote_path),
+            quote_batch_path(&local_path.to_string_lossy())
+        ));
+        local_sources.push((local_path, join_remote_path(&remote_dir, name)));
+    }
+
+    run_sftp(config.clone(), download_commands).await?;
+
+    let mut upload_commands = Vec::new();
+    for (local_path, remote_path) in local_sources {
+        collect_upload_commands(&local_path, &remote_path, &mut upload_commands)?;
+    }
+    run_sftp(config, upload_commands).await?;
+    Ok(())
+}
+
 async fn run_sftp(config: SftpHostConfig, commands: Vec<String>) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || run_sftp_blocking(config, commands))
         .await
         .map_err(|e| format!("sftp task failed: {e}"))?
+}
+
+fn collect_upload_commands(
+    source: &Path,
+    remote_path: &str,
+    commands: &mut Vec<String>,
+) -> Result<(), String> {
+    let meta = std::fs::symlink_metadata(source).map_err(|e| {
+        log::debug!("sftp_upload_into stat({}) failed: {e}", source.display());
+        e.to_string()
+    })?;
+    if meta.is_dir() {
+        commands.push(format!("mkdir {}", quote_batch_path(remote_path)));
+        for entry in std::fs::read_dir(source).map_err(|e| {
+            log::debug!(
+                "sftp_upload_into read_dir({}) failed: {e}",
+                source.display()
+            );
+            e.to_string()
+        })? {
+            let entry = entry.map_err(|e| e.to_string())?;
+            let name = entry.file_name();
+            let name = name
+                .to_str()
+                .ok_or_else(|| format!("path is not valid UTF-8: {}", entry.path().display()))?;
+            let child_remote = join_remote_path(remote_path, name);
+            collect_upload_commands(&entry.path(), &child_remote, commands)?;
+        }
+        return Ok(());
+    }
+
+    commands.push(format!(
+        "put -p {} {}",
+        quote_batch_path(&source.to_string_lossy()),
+        quote_batch_path(remote_path)
+    ));
+    Ok(())
+}
+
+fn collect_move_commands(
+    remote_paths: Vec<String>,
+    remote_dir: String,
+) -> Result<Vec<String>, String> {
+    if remote_paths.is_empty() {
+        return Err("no remote paths provided".to_string());
+    }
+    let remote_dir = validate_path("remote path", remote_dir)?;
+    let mut commands = Vec::new();
+    let mut top_level_names = std::collections::HashSet::new();
+    for remote_path in remote_paths {
+        let remote_path = validate_path("remote path", remote_path)?;
+        let name = remote_basename(&remote_path)?;
+        if !top_level_names.insert(name.to_string()) {
+            return Err(format!("duplicate moved item name: {name}"));
+        }
+        let target = join_remote_path(&remote_dir, name);
+        if target == remote_path
+            || remote_dir.starts_with(&format!("{}/", remote_path.trim_end_matches('/')))
+        {
+            return Err("cannot move a directory into itself".to_string());
+        }
+        commands.push(format!(
+            "rename {} {}",
+            quote_batch_path(&remote_path),
+            quote_batch_path(&target)
+        ));
+    }
+    Ok(commands)
 }
 
 fn run_sftp_blocking(config: SftpHostConfig, commands: Vec<String>) -> Result<String, String> {
@@ -335,7 +485,7 @@ fn parse_listing_line(line: &str, base: &str) -> Option<SftpEntry> {
         return None;
     }
     let name = parts[8..].join(" ");
-    if name == "." || name.is_empty() {
+    if name == "." || name == ".." || name.is_empty() {
         return None;
     }
     let is_dir = permissions.starts_with('d');
@@ -360,6 +510,15 @@ fn join_remote_path(base: &str, name: &str) -> String {
         return format!("/{clean_name}");
     }
     format!("{}/{}", base.trim_end_matches('/'), clean_name)
+}
+
+fn remote_basename(path: &str) -> Result<&str, String> {
+    let clean = path.trim_end_matches('/');
+    let name = clean.rsplit('/').next().unwrap_or(clean);
+    if name.is_empty() || name == "." || name == ".." {
+        return Err(format!("remote path must include a file name: {path}"));
+    }
+    Ok(name)
 }
 
 #[cfg(test)]
@@ -409,6 +568,70 @@ drwxr-xr-x    5 deploy deploy     4096 Jan 02 12:30 releases
     fn rejects_newline_paths() {
         let err = validate_path("remote path", "safe\nrm *".to_string()).unwrap_err();
         assert!(err.contains("invalid character"));
+    }
+
+    #[test]
+    fn parse_listing_skips_dot_entries() {
+        let output = "\
+drwxr-xr-x    5 deploy deploy     4096 Jan 02 12:30 .
+drwxr-xr-x    5 deploy deploy     4096 Jan 02 12:30 ..
+drwxr-xr-x    5 deploy deploy     4096 Jan 02 12:30 releases
+";
+        let entries = parse_listing(output, "/var/www");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].name, "releases");
+    }
+
+    #[test]
+    fn collects_recursive_upload_commands() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("site");
+        std::fs::create_dir_all(source.join("assets")).unwrap();
+        std::fs::write(source.join("index.html"), b"html").unwrap();
+        std::fs::write(source.join("assets/app.js"), b"js").unwrap();
+
+        let mut commands = Vec::new();
+        collect_upload_commands(&source, "/var/www/site", &mut commands).expect("commands");
+
+        assert_eq!(commands[0], r#"mkdir "/var/www/site""#);
+        assert!(commands.contains(&format!(
+            "put -p {} {}",
+            quote_batch_path(&source.join("index.html").to_string_lossy()),
+            quote_batch_path("/var/www/site/index.html")
+        )));
+        assert!(commands.contains(&r#"mkdir "/var/www/site/assets""#.to_string()));
+        assert!(commands.contains(&format!(
+            "put -p {} {}",
+            quote_batch_path(&source.join("assets/app.js").to_string_lossy()),
+            quote_batch_path("/var/www/site/assets/app.js")
+        )));
+    }
+
+    #[test]
+    fn collects_move_commands_into_remote_dir() {
+        let commands = collect_move_commands(
+            vec!["/var/www/app.log".to_string(), "/var/www/site".to_string()],
+            "/var/archive".to_string(),
+        )
+        .expect("commands");
+
+        assert_eq!(
+            commands,
+            vec![
+                r#"rename "/var/www/app.log" "/var/archive/app.log""#.to_string(),
+                r#"rename "/var/www/site" "/var/archive/site""#.to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn move_commands_refuse_directory_into_itself() {
+        let err = collect_move_commands(
+            vec!["/var/www/site".to_string()],
+            "/var/www/site/assets".to_string(),
+        )
+        .unwrap_err();
+        assert!(err.contains("cannot move a directory into itself"));
     }
 
     #[test]

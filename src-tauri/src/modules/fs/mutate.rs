@@ -1,4 +1,5 @@
-use crate::modules::workspace::{resolve_path, WorkspaceEnv};
+use crate::modules::workspace::{WorkspaceEnv, resolve_path};
+use std::path::Path;
 
 /// Creates a new empty file. Fails if the file already exists.
 #[tauri::command]
@@ -71,6 +72,174 @@ pub fn fs_delete(path: String, workspace: Option<WorkspaceEnv>) -> Result<(), St
 
     result.map_err(|e| {
         log::warn!("fs_delete({}) failed: {e}", p.display());
+        e.to_string()
+    })
+}
+
+/// Copies one or more files/directories into an existing destination directory.
+/// Existing top-level targets are refused to avoid clobbering user data.
+#[tauri::command]
+pub fn fs_copy_into(
+    sources: Vec<String>,
+    destination_dir: String,
+    workspace: Option<WorkspaceEnv>,
+) -> Result<(), String> {
+    if sources.is_empty() {
+        return Err("no sources provided".to_string());
+    }
+    let workspace = WorkspaceEnv::from_option(workspace);
+    let destination = resolve_path(&destination_dir, &workspace);
+    if !destination.is_dir() {
+        return Err(format!(
+            "destination is not a directory: {}",
+            destination.display()
+        ));
+    }
+
+    let mut jobs = Vec::with_capacity(sources.len());
+    for source in sources {
+        let source_path = Path::new(&source).to_path_buf();
+        let name = source_path
+            .file_name()
+            .ok_or_else(|| format!("source must include a file name: {}", source_path.display()))?;
+        let target = destination.join(name);
+        if !source_path.exists() {
+            return Err(format!("not found: {}", source_path.display()));
+        }
+        let meta = std::fs::symlink_metadata(&source_path).map_err(|e| {
+            log::debug!("fs_copy_into stat({}) failed: {e}", source_path.display());
+            e.to_string()
+        })?;
+        if meta.is_dir() {
+            let source_canonical = std::fs::canonicalize(&source_path).map_err(|e| {
+                log::debug!(
+                    "fs_copy_into canonicalize({}) failed: {e}",
+                    source_path.display()
+                );
+                e.to_string()
+            })?;
+            let destination_canonical = std::fs::canonicalize(&destination).map_err(|e| {
+                log::debug!(
+                    "fs_copy_into canonicalize({}) failed: {e}",
+                    destination.display()
+                );
+                e.to_string()
+            })?;
+            let target_canonical = destination_canonical.join(name);
+            if target_canonical.starts_with(&source_canonical) {
+                return Err("cannot copy a directory into itself".to_string());
+            }
+        }
+        if target.exists() {
+            return Err(format!("already exists: {}", target.display()));
+        }
+        jobs.push((source_path, target));
+    }
+
+    for (source, target) in jobs {
+        copy_path(&source, &target)?;
+    }
+    Ok(())
+}
+
+/// Moves one or more files/directories into an existing destination directory.
+/// Existing targets are refused; directories cannot be moved into themselves.
+#[tauri::command]
+pub fn fs_move_into(
+    sources: Vec<String>,
+    destination_dir: String,
+    workspace: Option<WorkspaceEnv>,
+) -> Result<(), String> {
+    if sources.is_empty() {
+        return Err("no sources provided".to_string());
+    }
+    let workspace = WorkspaceEnv::from_option(workspace);
+    let destination = resolve_path(&destination_dir, &workspace);
+    if !destination.is_dir() {
+        return Err(format!(
+            "destination is not a directory: {}",
+            destination.display()
+        ));
+    }
+
+    let destination_canonical = std::fs::canonicalize(&destination).map_err(|e| {
+        log::debug!(
+            "fs_move_into canonicalize({}) failed: {e}",
+            destination.display()
+        );
+        e.to_string()
+    })?;
+    let mut jobs = Vec::with_capacity(sources.len());
+    for source in sources {
+        let source_path = Path::new(&source).to_path_buf();
+        let name = source_path
+            .file_name()
+            .ok_or_else(|| format!("source must include a file name: {}", source_path.display()))?;
+        let target = destination.join(name);
+        if !source_path.exists() {
+            return Err(format!("not found: {}", source_path.display()));
+        }
+        if target.exists() {
+            return Err(format!("already exists: {}", target.display()));
+        }
+        let meta = std::fs::symlink_metadata(&source_path).map_err(|e| {
+            log::debug!("fs_move_into stat({}) failed: {e}", source_path.display());
+            e.to_string()
+        })?;
+        if meta.is_dir() {
+            let source_canonical = std::fs::canonicalize(&source_path).map_err(|e| {
+                log::debug!(
+                    "fs_move_into canonicalize({}) failed: {e}",
+                    source_path.display()
+                );
+                e.to_string()
+            })?;
+            if destination_canonical.starts_with(&source_canonical) {
+                return Err("cannot move a directory into itself".to_string());
+            }
+        }
+        jobs.push((source_path, target));
+    }
+
+    for (source, target) in jobs {
+        std::fs::rename(&source, &target).map_err(|e| {
+            log::debug!(
+                "fs_move_into({} -> {}) failed: {e}",
+                source.display(),
+                target.display()
+            );
+            e.to_string()
+        })?;
+    }
+    Ok(())
+}
+
+fn copy_path(source: &Path, target: &Path) -> Result<(), String> {
+    let meta = std::fs::symlink_metadata(source).map_err(|e| {
+        log::debug!("fs_copy_into stat({}) failed: {e}", source.display());
+        e.to_string()
+    })?;
+    if meta.is_dir() {
+        std::fs::create_dir(target).map_err(|e| {
+            log::debug!("fs_copy_into mkdir({}) failed: {e}", target.display());
+            e.to_string()
+        })?;
+        for entry in std::fs::read_dir(source).map_err(|e| {
+            log::debug!("fs_copy_into read_dir({}) failed: {e}", source.display());
+            e.to_string()
+        })? {
+            let entry = entry.map_err(|e| e.to_string())?;
+            copy_path(&entry.path(), &target.join(entry.file_name()))?;
+        }
+        return Ok(());
+    }
+
+    std::fs::copy(source, target).map(|_| ()).map_err(|e| {
+        log::debug!(
+            "fs_copy_into copy({} -> {}) failed: {e}",
+            source.display(),
+            target.display()
+        );
         e.to_string()
     })
 }
@@ -167,5 +336,95 @@ mod tests {
         assert!(!link.exists(), "symlink itself should be gone");
         assert!(real.is_dir(), "target dir must survive");
         assert_eq!(std::fs::read(real.join("keep.txt")).unwrap(), b"keep");
+    }
+
+    #[test]
+    fn copy_into_copies_files_and_directories_recursively() {
+        let dir = tempfile::tempdir().unwrap();
+        let source_file = dir.path().join("a.txt");
+        std::fs::write(&source_file, b"a").unwrap();
+        let source_dir = dir.path().join("folder");
+        std::fs::create_dir_all(source_dir.join("nested")).unwrap();
+        std::fs::write(source_dir.join("nested/b.txt"), b"b").unwrap();
+        let destination = dir.path().join("dest");
+        std::fs::create_dir(&destination).unwrap();
+
+        fs_copy_into(
+            vec![s(source_file), s(source_dir)],
+            s(destination.clone()),
+            None,
+        )
+        .expect("copy");
+
+        assert_eq!(std::fs::read(destination.join("a.txt")).unwrap(), b"a");
+        assert_eq!(
+            std::fs::read(destination.join("folder/nested/b.txt")).unwrap(),
+            b"b"
+        );
+    }
+
+    #[test]
+    fn copy_into_refuses_to_overwrite_existing_top_level_target() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("a.txt");
+        std::fs::write(&source, b"new").unwrap();
+        let destination = dir.path().join("dest");
+        std::fs::create_dir(&destination).unwrap();
+        std::fs::write(destination.join("a.txt"), b"old").unwrap();
+
+        let err = fs_copy_into(vec![s(source)], s(destination.clone()), None).unwrap_err();
+
+        assert!(err.contains("already exists"), "got: {err}");
+        assert_eq!(std::fs::read(destination.join("a.txt")).unwrap(), b"old");
+    }
+
+    #[test]
+    fn copy_into_refuses_to_copy_directory_into_itself() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("folder");
+        let nested_destination = source.join("nested");
+        std::fs::create_dir_all(&nested_destination).unwrap();
+
+        let err = fs_copy_into(vec![s(source)], s(nested_destination), None).unwrap_err();
+
+        assert!(
+            err.contains("cannot copy a directory into itself"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn move_into_moves_file_and_refuses_overwrite() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("a.txt");
+        std::fs::write(&source, b"a").unwrap();
+        let destination = dir.path().join("dest");
+        std::fs::create_dir(&destination).unwrap();
+
+        fs_move_into(vec![s(source.clone())], s(destination.clone()), None).expect("move");
+
+        assert!(!source.exists());
+        assert_eq!(std::fs::read(destination.join("a.txt")).unwrap(), b"a");
+
+        let another = dir.path().join("a.txt");
+        std::fs::write(&another, b"new").unwrap();
+        let err = fs_move_into(vec![s(another)], s(destination.clone()), None).unwrap_err();
+        assert!(err.contains("already exists"), "got: {err}");
+        assert_eq!(std::fs::read(destination.join("a.txt")).unwrap(), b"a");
+    }
+
+    #[test]
+    fn move_into_refuses_to_move_directory_into_itself() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("folder");
+        let nested_destination = source.join("nested");
+        std::fs::create_dir_all(&nested_destination).unwrap();
+
+        let err = fs_move_into(vec![s(source)], s(nested_destination), None).unwrap_err();
+
+        assert!(
+            err.contains("cannot move a directory into itself"),
+            "got: {err}"
+        );
     }
 }

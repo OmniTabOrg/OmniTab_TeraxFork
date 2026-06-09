@@ -2981,6 +2981,7 @@ export default function App() {
                             onOpenFile={handleOpenFile}
                             onPathRenamed={handlePathRenamed}
                             onPathDeleted={handlePathDeleted}
+                            onChangeWorkingTree={sendCd}
                             onRevealInTerminal={cdInNewTab}
                             onAttachToAgent={handleAttachFileToAgent}
                             onOpenMarkdownPreview={openMarkdownPreview}
