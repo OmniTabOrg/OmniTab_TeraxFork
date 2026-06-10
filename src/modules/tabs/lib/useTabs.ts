@@ -22,6 +22,7 @@ export type TerminalTab = {
   /** User-set label that overrides the cwd-derived name. Survives cd. */
   customTitle?: string;
   hostId?: string;
+  remotePath?: string;
 };
 
 export type EditorTab = {
@@ -123,6 +124,8 @@ export type TabPatch = Partial<{
   url: string;
   /** Empty string resets a terminal tab to its cwd-derived name. */
   customTitle: string;
+  hostId: string | null;
+  remotePath: string | null;
 }>;
 
 function basename(path: string): string {
@@ -208,7 +211,12 @@ export function useTabs(initial?: Partial<TerminalTab>) {
   }, []);
 
   const newHostShellTab = useCallback(
-    (cwd: string | undefined, title: string, hostId: string) => {
+    (
+      cwd: string | undefined,
+      title: string,
+      hostId: string,
+      remotePath?: string,
+    ) => {
       const tabId = nextIdRef.current++;
       const leafId = nextIdRef.current++;
       setTabs((t) => [
@@ -222,6 +230,7 @@ export function useTabs(initial?: Partial<TerminalTab>) {
           activeLeafId: leafId,
           customTitle: title,
           hostId,
+          remotePath,
         },
       ]);
       setActiveId(tabId);
@@ -731,6 +740,12 @@ export function useTabs(initial?: Partial<TerminalTab>) {
             ...(patch.customTitle !== undefined && {
               customTitle:
                 patch.customTitle === "" ? undefined : patch.customTitle,
+            }),
+            ...(patch.remotePath !== undefined && {
+              remotePath: patch.remotePath ?? undefined,
+            }),
+            ...(patch.hostId !== undefined && {
+              hostId: patch.hostId ?? undefined,
             }),
           };
         }

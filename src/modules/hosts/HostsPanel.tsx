@@ -34,6 +34,7 @@ import { clearHostPassword, setHostPassword } from "./lib/passwords";
 
 type Props = {
   localRootPath: string | null;
+  remoteRootPath?: string | null;
   selectedHost: HostProfile | null;
   activeFilePath?: string | null;
   onOpenFile: (path: string, pin?: boolean) => void;
@@ -60,6 +61,7 @@ export const HostsPanel = forwardRef<FileExplorerHandle, Props>(
   function HostsPanel(
     {
       localRootPath,
+      remoteRootPath,
       selectedHost,
       activeFilePath,
       onOpenFile,
@@ -102,7 +104,9 @@ export const HostsPanel = forwardRef<FileExplorerHandle, Props>(
             <RemoteFileExplorer
               ref={remoteExplorerRef}
               host={selectedHost}
+              rootPath={remoteRootPath ?? selectedHost.remotePath}
               onOpenTerminal={onOpenHostTerminal}
+              onOpenFile={onOpenFile}
               onChangeWorkingTree={onChangeWorkingTree}
             />
           ) : (

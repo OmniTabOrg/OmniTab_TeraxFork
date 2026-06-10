@@ -105,7 +105,9 @@ function SftpPane({ host, visible }: { host: HostProfile; visible: boolean }) {
   }, [host.id, visible]);
 
   const runMutation = useCallback(
-    async (fn: (config: Awaited<ReturnType<typeof getConfig>>) => Promise<void>) => {
+    async (
+      fn: (config: Awaited<ReturnType<typeof getConfig>>) => Promise<void>,
+    ) => {
       setBusy(true);
       setError(null);
       try {
@@ -208,7 +210,11 @@ function SftpPane({ host, visible }: { host: HostProfile; visible: boolean }) {
       <div className="flex shrink-0 items-center gap-3 border-b border-border/60 px-3 py-2">
         <div className="flex min-w-0 flex-1 items-center gap-2">
           <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
-            <HugeiconsIcon icon={FolderTransferIcon} size={17} strokeWidth={2} />
+            <HugeiconsIcon
+              icon={FolderTransferIcon}
+              size={17}
+              strokeWidth={2}
+            />
           </span>
           <div className="min-w-0">
             <div className="truncate text-sm font-medium">{host.name}</div>
@@ -402,10 +408,12 @@ function joinRemotePath(base: string, name: string): string {
 
 function parentRemotePath(path: string): string {
   const clean = path.trim();
-  if (!clean || clean === "." || clean === "/") return ".";
+  if (!clean || clean === ".") return ".";
+  if (clean === "/") return "/";
   const withoutTrailing = clean.replace(/\/+$/, "");
   const idx = withoutTrailing.lastIndexOf("/");
-  if (idx <= 0) return ".";
+  if (idx === 0) return "/";
+  if (idx < 0) return ".";
   return withoutTrailing.slice(0, idx);
 }
 

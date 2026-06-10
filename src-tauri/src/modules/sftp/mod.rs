@@ -1,6 +1,7 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use tempfile::TempDir;
@@ -39,9 +40,41 @@ pub async fn sftp_list(config: SftpHostConfig, path: String) -> Result<Vec<SftpE
 }
 
 #[tauri::command]
+pub async fn sftp_parent_path(config: SftpHostConfig, path: String) -> Result<String, String> {
+    let path = validate_path("remote path", path)?;
+    let output = run_sftp(
+        config,
+        vec![
+            format!("cd {}", quote_batch_path(&path)),
+            "cd ..".to_string(),
+            "pwd".to_string(),
+        ],
+    )
+    .await?;
+    parse_pwd_output(&output).ok_or_else(|| "failed to resolve parent path".to_string())
+}
+
+#[tauri::command]
 pub async fn sftp_mkdir(config: SftpHostConfig, path: String) -> Result<(), String> {
     let path = validate_path("remote path", path)?;
     run_sftp(config, vec![format!("mkdir {}", quote_batch_path(&path))]).await?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn sftp_create_file(config: SftpHostConfig, path: String) -> Result<(), String> {
+    let path = validate_path("remote path", path)?;
+    let temp =
+        tempfile::NamedTempFile::new().map_err(|e| format!("failed to create temp file: {e}"))?;
+    run_sftp(
+        config,
+        vec![format!(
+            "put -p {} {}",
+            quote_batch_path(&temp.path().to_string_lossy()),
+            quote_batch_path(&path)
+        )],
+    )
+    .await?;
     Ok(())
 }
 
@@ -91,6 +124,34 @@ pub async fn sftp_download(
     )
     .await?;
     Ok(())
+}
+
+#[tauri::command]
+pub async fn sftp_download_temp(
+    config: SftpHostConfig,
+    remote_path: String,
+) -> Result<String, String> {
+    let remote_path = validate_path("remote path", remote_path)?;
+    let name = remote_basename(&remote_path)?;
+    let dir = std::env::temp_dir().join("omnitab-sftp-preview");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("failed to create temp dir: {e}"))?;
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let item_dir = dir.join(stamp.to_string());
+    std::fs::create_dir_all(&item_dir).map_err(|e| format!("failed to create temp dir: {e}"))?;
+    let local_path = item_dir.join(name);
+    run_sftp(
+        config,
+        vec![format!(
+            "get -p {} {}",
+            quote_batch_path(&remote_path),
+            quote_batch_path(&local_path.to_string_lossy())
+        )],
+    )
+    .await?;
+    Ok(local_path.to_string_lossy().into_owned())
 }
 
 #[tauri::command]
@@ -469,6 +530,21 @@ fn parse_listing(output: &str, base: &str) -> Vec<SftpEntry> {
             .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
     });
     entries
+}
+
+fn parse_pwd_output(output: &str) -> Option<String> {
+    output.lines().rev().find_map(|line| {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with("sftp>") {
+            return None;
+        }
+        Some(
+            trimmed
+                .strip_prefix("Remote working directory: ")
+                .unwrap_or(trimmed)
+                .to_string(),
+        )
+    })
 }
 
 fn parse_listing_line(line: &str, base: &str) -> Option<SftpEntry> {

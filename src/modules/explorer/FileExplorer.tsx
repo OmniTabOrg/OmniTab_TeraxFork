@@ -71,9 +71,22 @@ type Row =
       isExpanded: boolean;
       depth: number;
     }
-  | { kind: "rename"; key: string; path: string; name: string; isDir: boolean; depth: number }
+  | {
+      kind: "rename";
+      key: string;
+      path: string;
+      name: string;
+      isDir: boolean;
+      depth: number;
+    }
   | { kind: "pending"; key: string; depth: number; pendingKind: "file" | "dir" }
-  | { kind: "status"; key: string; depth: number; tone: "muted" | "error"; message: string };
+  | {
+      kind: "status";
+      key: string;
+      depth: number;
+      tone: "muted" | "error";
+      message: string;
+    };
 
 const ROW_HEIGHT = 24;
 const OVERSCAN = 8;
@@ -97,7 +110,8 @@ function basename(path: string): string {
 
 function parentPath(path: string, fallback: string): string {
   const idx = path.lastIndexOf("/");
-  if (idx <= 0) return fallback;
+  if (idx === 0) return "/";
+  if (idx < 0) return fallback;
   return path.slice(0, idx);
 }
 
@@ -201,8 +215,9 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(
     const [isSearchActive, setIsSearchActive] = useState(false);
     const [dropTargetPath, setDropTargetPath] = useState<string | null>(null);
     const [dropError, setDropError] = useState<string | null>(null);
-    const [fileClipboard, setFileClipboard] =
-      useState<FileClipboard | null>(null);
+    const [fileClipboard, setFileClipboard] = useState<FileClipboard | null>(
+      null,
+    );
     const [dragSourcePaths, setDragSourcePaths] = useState<string[]>([]);
     const searchRef = useRef<ExplorerSearchHandle>(null);
     const containerRef = useRef<HTMLDivElement>(null);
@@ -216,9 +231,20 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(
     }, [tree.expanded]);
 
     const { rows, entryIndexByPath } = useMemo(() => {
-      if (!rootPath) return { rows: [] as Row[], entryIndexByPath: new Map<string, number>() };
+      if (!rootPath)
+        return {
+          rows: [] as Row[],
+          entryIndexByPath: new Map<string, number>(),
+        };
       return buildRows(rootPath, tree);
-    }, [rootPath, tree.nodes, tree.expanded, tree.renaming, tree.pendingCreate, tree]);
+    }, [
+      rootPath,
+      tree.nodes,
+      tree.expanded,
+      tree.renaming,
+      tree.pendingCreate,
+      tree,
+    ]);
 
     const entryPaths = useMemo<string[]>(() => {
       const out: string[] = [];
@@ -243,7 +269,10 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(
       let disposed = false;
       let unlisten: (() => void) | null = null;
 
-      const resolveTarget = (position: { x: number; y: number }): DropTarget | null => {
+      const resolveTarget = (position: {
+        x: number;
+        y: number;
+      }): DropTarget | null => {
         const el = elementFromDragPosition(position);
         const row = el?.closest<HTMLElement>("[data-fs-path]");
         if (row?.dataset.fsPath) {
@@ -291,7 +320,9 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(
           if (disposed) fn();
           else unlisten = fn;
         })
-        .catch((err) => console.error("[omnitab] explorer drop listen failed:", err));
+        .catch((err) =>
+          console.error("[omnitab] explorer drop listen failed:", err),
+        );
 
       return () => {
         disposed = true;
@@ -331,7 +362,8 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(
           } else {
             await tree.moveInto(paths, destinationDir);
             setFileClipboard((curr) =>
-              curr?.operation === "cut" && curr.paths.every((p) => paths.includes(p))
+              curr?.operation === "cut" &&
+              curr.paths.every((p) => paths.includes(p))
                 ? null
                 : curr,
             );
@@ -368,10 +400,7 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(
     );
 
     const handleDragOverTarget = useCallback(
-      (
-        target: DropTarget,
-        event: DragEvent<HTMLElement>,
-      ) => {
+      (target: DropTarget, event: DragEvent<HTMLElement>) => {
         if (!event.dataTransfer.types.includes(LOCAL_DRAG_MIME)) return;
         event.preventDefault();
         event.stopPropagation();
@@ -419,7 +448,10 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(
 
     const lastSyncedActivePathRef = useRef<string | null>(null);
     useEffect(() => {
-      if (!activeFilePath || activeFilePath === lastSyncedActivePathRef.current) {
+      if (
+        !activeFilePath ||
+        activeFilePath === lastSyncedActivePathRef.current
+      ) {
         return;
       }
       if (!entryIndexByPath.has(activeFilePath)) return;
@@ -593,16 +625,23 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(
                 if (event.detail > 1) return;
                 onChangeWorkingTree?.(row.path);
               }}
-              onDoubleClick={() => onChangeWorkingTree?.(row.path)}
               onDragOver={(e) =>
                 handleDragOverTarget(
-                  { hoverPath: row.path, targetDir: row.path, expandPath: null },
+                  {
+                    hoverPath: row.path,
+                    targetDir: row.path,
+                    expandPath: null,
+                  },
                   e,
                 )
               }
               onDrop={(e) =>
                 handleDropTarget(
-                  { hoverPath: row.path, targetDir: row.path, expandPath: null },
+                  {
+                    hoverPath: row.path,
+                    targetDir: row.path,
+                    expandPath: null,
+                  },
                   e,
                 )
               }
@@ -673,7 +712,11 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(
           );
         case "status":
           return (
-            <StatusRow depth={row.depth} message={row.message} tone={row.tone} />
+            <StatusRow
+              depth={row.depth}
+              message={row.message}
+              tone={row.tone}
+            />
           );
       }
     };
@@ -765,13 +808,21 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(
                 data-fs-drop-root
                 onDragOver={(e) =>
                   handleDragOverTarget(
-                    { hoverPath: rootPath, targetDir: rootPath, expandPath: null },
+                    {
+                      hoverPath: rootPath,
+                      targetDir: rootPath,
+                      expandPath: null,
+                    },
                     e,
                   )
                 }
                 onDrop={(e) =>
                   handleDropTarget(
-                    { hoverPath: rootPath, targetDir: rootPath, expandPath: null },
+                    {
+                      hoverPath: rootPath,
+                      targetDir: rootPath,
+                      expandPath: null,
+                    },
                     e,
                   )
                 }

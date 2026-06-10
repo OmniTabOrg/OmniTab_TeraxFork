@@ -505,8 +505,7 @@ export default function App() {
     const explorer = explorerRef.current;
     if (sidebarView !== "explorer" || sidebarCollapsed) {
       if (sidebarCollapsed) setSidebarCollapsed(false);
-      if (sidebarView !== "explorer")
-        setActiveTerminalSidebarView("explorer");
+      if (sidebarView !== "explorer") setActiveTerminalSidebarView("explorer");
       const active = document.activeElement;
       explorerReturnFocusRef.current =
         active instanceof HTMLElement && active !== document.body
@@ -2111,6 +2110,7 @@ export default function App() {
         inheritedCwdForNewTab(),
         host.name,
         host.id,
+        host.remotePath,
       );
       void (async () => {
         const passwordPromise =
@@ -2131,6 +2131,40 @@ export default function App() {
       })();
     },
     [inheritedCwdForNewTab, newHostShellTab],
+  );
+
+  const connectHostInActiveTab = useCallback(
+    (host: HostProfile) => {
+      if (!activeTerminalTab || activeLeafId === null) {
+        openHostShell(host);
+        return;
+      }
+      updateTab(activeTerminalTab.id, {
+        title: host.name,
+        customTitle: host.name,
+        hostId: host.id,
+        remotePath: host.remotePath,
+      });
+      void (async () => {
+        const passwordPromise =
+          host.authMode === "password"
+            ? getHostPassword(host.id)
+            : Promise.resolve(null);
+        await whenSessionReady(activeLeafId);
+        writeToSession(activeLeafId, `${buildSshCommand(host)}\r`);
+        terminalRefs.current.get(activeLeafId)?.focus();
+        const password = await passwordPromise;
+        if (!password) return;
+        await waitForSshPasswordPrompt(
+          () => {
+            if (!liveLeavesRef.current.has(activeLeafId)) return null;
+            return terminalRefs.current.get(activeLeafId)?.getBuffer(80) ?? "";
+          },
+          () => writeToSession(activeLeafId, `${password}\r`),
+        );
+      })();
+    },
+    [activeLeafId, activeTerminalTab, openHostShell, updateTab],
   );
 
   const selectedHost = useMemo(
@@ -2154,11 +2188,20 @@ export default function App() {
     (source: HostSourceValue) => {
       setSelectedHostSource(source);
       writeSelectedSource(source);
-      if (source === "local") return;
+      if (source === "local") {
+        if (activeTerminalTab) {
+          updateTab(activeTerminalTab.id, {
+            customTitle: "",
+            hostId: null,
+            remotePath: null,
+          });
+        }
+        return;
+      }
       const host = hosts.find((h) => sourceForHost(h.id) === source);
-      if (host) openHostShell(host);
+      if (host) connectHostInActiveTab(host);
     },
-    [hosts, openHostShell],
+    [activeTerminalTab, connectHostInActiveTab, hosts, updateTab],
   );
 
   useEffect(() => {
@@ -2178,6 +2221,16 @@ export default function App() {
       term.focus();
     },
     [activeLeafId],
+  );
+
+  const changeWorkingTree = useCallback(
+    (path: string) => {
+      sendCd(path);
+      if (activeTerminalTab?.kind === "terminal" && activeTerminalTab.hostId) {
+        updateTab(activeTerminalTab.id, { remotePath: path });
+      }
+    },
+    [activeTerminalTab, sendCd, updateTab],
   );
 
   const cdInNewTab = useCallback(
@@ -2313,8 +2366,7 @@ export default function App() {
       ? sourceControlContextPath
       : badgeContextPath;
   const sourceControl = useSourceControl(sourceControlPath, true);
-  const hasSourceControlContent =
-    !activeTerminalHost && sourceControl.hasRepo;
+  const hasSourceControlContent = !activeTerminalHost && sourceControl.hasRepo;
   const effectiveSidebarView =
     hasSourceControlContent && sidebarView === "source-control"
       ? "source-control"
@@ -2710,6 +2762,10 @@ export default function App() {
   const activeCwd = activeTerminalLeafCwd;
   const terminalExplorerRoot =
     activeTerminalLeafCwd ?? activeTerminalTab?.cwd ?? explorerRoot;
+  const terminalRemoteExplorerRoot =
+    activeTerminalTab?.kind === "terminal" && activeTerminalTab.hostId
+      ? (activeTerminalTab.remotePath ?? activeTerminalHost?.remotePath ?? ".")
+      : null;
 
   useEffect(() => {
     const findCwd = () => {
@@ -2976,12 +3032,13 @@ export default function App() {
                           <HostsPanel
                             ref={explorerRef}
                             localRootPath={terminalExplorerRoot}
+                            remoteRootPath={terminalRemoteExplorerRoot}
                             selectedHost={activeTerminalHost}
                             activeFilePath={explorerActiveFilePath}
                             onOpenFile={handleOpenFile}
                             onPathRenamed={handlePathRenamed}
                             onPathDeleted={handlePathDeleted}
-                            onChangeWorkingTree={sendCd}
+                            onChangeWorkingTree={changeWorkingTree}
                             onRevealInTerminal={cdInNewTab}
                             onAttachToAgent={handleAttachFileToAgent}
                             onOpenMarkdownPreview={openMarkdownPreview}

@@ -9,7 +9,10 @@ import {
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { InlineInput } from "@/modules/explorer/InlineInput";
-import { fileIconUrl, folderIconUrl } from "@/modules/explorer/lib/iconResolver";
+import {
+  fileIconUrl,
+  folderIconUrl,
+} from "@/modules/explorer/lib/iconResolver";
 import {
   COMPACT_CONTENT,
   COMPACT_ITEM,
@@ -24,13 +27,11 @@ import type {
 } from "@/modules/hosts/types";
 import {
   ArrowRight01Icon,
-  ArrowUp01Icon,
-  ComputerTerminal02Icon,
-  Delete02Icon,
-  Download01Icon,
+  Cancel01Icon,
+  FileAddIcon,
   FolderAddIcon,
   Refresh01Icon,
-  Upload01Icon,
+  Search01Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { invoke } from "@tauri-apps/api/core";
@@ -57,6 +58,7 @@ type TreeState = Record<string, ChildrenState>;
 
 type PendingCreate = {
   parentPath: string;
+  kind: "file" | "dir";
 };
 
 type RemoteClipboard = {
@@ -92,7 +94,13 @@ type Row =
       entry: SftpEntry;
       depth: number;
     }
-  | { kind: "pending"; key: string; parentPath: string; depth: number }
+  | {
+      kind: "pending";
+      key: string;
+      parentPath: string;
+      pendingKind: "file" | "dir";
+      depth: number;
+    }
   | {
       kind: "status";
       key: string;
@@ -103,18 +111,35 @@ type Row =
 
 type Props = {
   host: HostProfile;
+  rootPath: string;
   onOpenTerminal: (host: HostProfile) => void;
+  onOpenFile: (path: string, pin?: boolean) => void;
   onChangeWorkingTree?: (path: string) => void;
 };
 
 export const RemoteFileExplorer = forwardRef<FileExplorerHandle, Props>(
-  function RemoteFileExplorer({ host, onOpenTerminal, onChangeWorkingTree }, ref) {
-    const initialPath = normalizeRootPath(host.remotePath);
+  function RemoteFileExplorer(
+    {
+      host,
+      rootPath: rootPathProp,
+      onOpenTerminal,
+      onOpenFile,
+      onChangeWorkingTree,
+    },
+    ref,
+  ) {
+    const initialPath = normalizeRootPath(rootPathProp || host.remotePath);
     const [rootPath, setRootPath] = useState(initialPath);
-    const [pathInput, setPathInput] = useState(initialPath);
     const [nodes, setNodes] = useState<TreeState>({});
     const [expanded, setExpanded] = useState<Set<string>>(new Set());
     const [selectedPath, setSelectedPath] = useState<string | null>(null);
+    const [isSearchOpen, setIsSearchOpen] = useState(false);
+    const [remoteSearchQuery, setRemoteSearchQuery] = useState("");
+    const [remoteSearchResults, setRemoteSearchResults] = useState<SftpEntry[]>(
+      [],
+    );
+    const [remoteSearchBusy, setRemoteSearchBusy] = useState(false);
+    const [remoteSearchTruncated, setRemoteSearchTruncated] = useState(false);
     const [renaming, setRenaming] = useState<string | null>(null);
     const [pendingCreate, setPendingCreate] = useState<PendingCreate | null>(
       null,
@@ -127,6 +152,7 @@ export const RemoteFileExplorer = forwardRef<FileExplorerHandle, Props>(
     const [error, setError] = useState<string | null>(null);
     const containerRef = useRef<HTMLDivElement>(null);
     const selectedPathRef = useRef<string | null>(null);
+    const searchInputRef = useRef<HTMLInputElement>(null);
     const expandedRef = useRef(expanded);
     const expandDropTargetTimerRef = useRef<number | null>(null);
 
@@ -173,26 +199,26 @@ export const RemoteFileExplorer = forwardRef<FileExplorerHandle, Props>(
     );
 
     useEffect(() => {
-      const nextRoot = normalizeRootPath(host.remotePath);
+      const nextRoot = normalizeRootPath(rootPathProp || host.remotePath);
       setRootPath(nextRoot);
-      setPathInput(nextRoot);
       setNodes({});
       setExpanded(new Set());
       setSelectedPath(null);
+      setRemoteSearchQuery("");
       setRenaming(null);
       setPendingCreate(null);
       setError(null);
       void fetchChildren(nextRoot);
-    }, [fetchChildren, host.id, host.remotePath]);
+    }, [fetchChildren, host.id, host.remotePath, rootPathProp]);
 
     const openRoot = useCallback(
       (path: string) => {
         const nextRoot = normalizeRootPath(path);
         setRootPath(nextRoot);
-        setPathInput(nextRoot);
         setNodes({});
         setExpanded(new Set());
         setSelectedPath(null);
+        setRemoteSearchQuery("");
         setRenaming(null);
         setPendingCreate(null);
         setError(null);
@@ -200,6 +226,24 @@ export const RemoteFileExplorer = forwardRef<FileExplorerHandle, Props>(
       },
       [fetchChildren],
     );
+
+    const openParentRoot = useCallback(async () => {
+      setBusy(true);
+      setError(null);
+      try {
+        const config = await getConfig();
+        const parent = await invoke<string>("sftp_parent_path", {
+          config,
+          path: rootPath,
+        });
+        openRoot(parent);
+        onChangeWorkingTree?.(parent);
+      } catch (e) {
+        setError(String(e));
+      } finally {
+        setBusy(false);
+      }
+    }, [getConfig, onChangeWorkingTree, openRoot, rootPath]);
 
     const refresh = useCallback(
       (path: string) => {
@@ -281,16 +325,19 @@ export const RemoteFileExplorer = forwardRef<FileExplorerHandle, Props>(
       [fetchChildren, getConfig],
     );
 
-    const beginCreate = useCallback((parentPath: string) => {
-      setRenaming(null);
-      setPendingCreate({ parentPath });
-      setExpanded((curr) => {
-        if (parentPath === rootPath || curr.has(parentPath)) return curr;
-        const next = new Set(curr);
-        next.add(parentPath);
-        return next;
-      });
-    }, [rootPath]);
+    const beginCreate = useCallback(
+      (parentPath: string, kind: "file" | "dir" = "dir") => {
+        setRenaming(null);
+        setPendingCreate({ parentPath, kind });
+        setExpanded((curr) => {
+          if (parentPath === rootPath || curr.has(parentPath)) return curr;
+          const next = new Set(curr);
+          next.add(parentPath);
+          return next;
+        });
+      },
+      [rootPath],
+    );
 
     const commitCreate = useCallback(
       async (name: string) => {
@@ -302,7 +349,11 @@ export const RemoteFileExplorer = forwardRef<FileExplorerHandle, Props>(
         }
         const path = joinRemotePath(pendingCreate.parentPath, trimmed);
         await runMutation(
-          (config) => invoke<void>("sftp_mkdir", { config, path }),
+          (config) =>
+            invoke<void>(
+              pendingCreate.kind === "file" ? "sftp_create_file" : "sftp_mkdir",
+              { config, path },
+            ),
           pendingCreate.parentPath,
         );
         setPendingCreate(null);
@@ -449,10 +500,114 @@ export const RemoteFileExplorer = forwardRef<FileExplorerHandle, Props>(
       [runMutation],
     );
 
+    const openRemoteFile = useCallback(
+      async (entry: SftpEntry) => {
+        if (entry.isDir) return;
+        setBusy(true);
+        setError(null);
+        try {
+          const config = await getConfig();
+          const localPath = await invoke<string>("sftp_download_temp", {
+            config,
+            remotePath: entry.path,
+          });
+          onOpenFile(localPath, false);
+        } catch (e) {
+          setError(String(e));
+        } finally {
+          setBusy(false);
+        }
+      },
+      [getConfig, onOpenFile],
+    );
+
     const selectedEntry =
-      selectedPath !== null ? entriesByPath.get(selectedPath) ?? null : null;
-    const uploadTarget =
-      selectedEntry?.isDir === true ? selectedEntry.path : rootPath;
+      selectedPath !== null ? (entriesByPath.get(selectedPath) ?? null) : null;
+    const isSearchActive = remoteSearchQuery.trim().length > 0;
+
+    useEffect(() => {
+      if (isSearchOpen) {
+        requestAnimationFrame(() => searchInputRef.current?.focus());
+      } else {
+        setRemoteSearchQuery("");
+        setRemoteSearchResults([]);
+        setRemoteSearchBusy(false);
+        setRemoteSearchTruncated(false);
+      }
+    }, [isSearchOpen]);
+
+    useEffect(() => {
+      const q = remoteSearchQuery.trim().toLowerCase();
+      if (q.length < 2) {
+        setRemoteSearchResults([]);
+        setRemoteSearchBusy(false);
+        setRemoteSearchTruncated(false);
+        return;
+      }
+
+      let alive = true;
+      setRemoteSearchBusy(true);
+      setRemoteSearchTruncated(false);
+      const handle = window.setTimeout(async () => {
+        try {
+          const config = await getConfig();
+          const hits: SftpEntry[] = [];
+          const queue = [rootPath];
+          const visited = new Set<string>();
+          let scannedDirs = 0;
+          let truncated = false;
+
+          while (alive && queue.length > 0 && hits.length < 200) {
+            const dir = normalizeRootPath(queue.shift() ?? "");
+            if (visited.has(dir)) continue;
+            visited.add(dir);
+            scannedDirs += 1;
+            if (scannedDirs > 500) {
+              truncated = true;
+              break;
+            }
+
+            const entries = await invoke<SftpEntry[]>("sftp_list", {
+              config,
+              path: dir,
+            });
+            if (!alive) return;
+            setNodes((curr) => ({
+              ...curr,
+              [dir]: { status: "loaded", entries },
+            }));
+
+            for (const entry of entries) {
+              if (entry.name.toLowerCase().includes(q)) hits.push(entry);
+              if (entry.isDir) queue.push(entry.path);
+              if (hits.length >= 200) {
+                truncated = true;
+                break;
+              }
+            }
+          }
+
+          if (queue.length > 0) truncated = true;
+          if (alive) {
+            setRemoteSearchResults(hits);
+            setRemoteSearchTruncated(truncated);
+          }
+        } catch (e) {
+          if (alive) {
+            console.error("sftp search failed:", e);
+            setRemoteSearchResults([]);
+            setRemoteSearchTruncated(false);
+          }
+        } finally {
+          if (alive) setRemoteSearchBusy(false);
+        }
+      }, 300);
+
+      return () => {
+        alive = false;
+        window.clearTimeout(handle);
+      };
+    }, [getConfig, remoteSearchQuery, rootPath]);
 
     const targetForEntry = useCallback(
       (entry: SftpEntry): DropTarget => ({
@@ -485,7 +640,10 @@ export const RemoteFileExplorer = forwardRef<FileExplorerHandle, Props>(
       let disposed = false;
       let unlisten: (() => void) | null = null;
 
-      const resolveTarget = (position: { x: number; y: number }): DropTarget | null => {
+      const resolveTarget = (position: {
+        x: number;
+        y: number;
+      }): DropTarget | null => {
         const el = elementFromDragPosition(position);
         const row = el?.closest<HTMLElement>("[data-sftp-path]");
         if (row?.dataset.sftpPath) {
@@ -530,7 +688,9 @@ export const RemoteFileExplorer = forwardRef<FileExplorerHandle, Props>(
           if (disposed) fn();
           else unlisten = fn;
         })
-        .catch((err) => console.error("[omnitab] sftp drop listen failed:", err));
+        .catch((err) =>
+          console.error("[omnitab] sftp drop listen failed:", err),
+        );
 
       return () => {
         disposed = true;
@@ -538,12 +698,7 @@ export const RemoteFileExplorer = forwardRef<FileExplorerHandle, Props>(
         clearExpandDropTargetTimer();
         unlisten?.();
       };
-    }, [
-      clearExpandDropTargetTimer,
-      expandPath,
-      rootPath,
-      uploadPathsInto,
-    ]);
+    }, [clearExpandDropTargetTimer, expandPath, rootPath, uploadPathsInto]);
 
     const handleDragStartEntry = useCallback(
       (entry: SftpEntry, event: DragEvent<HTMLButtonElement>) => {
@@ -603,7 +758,8 @@ export const RemoteFileExplorer = forwardRef<FileExplorerHandle, Props>(
           );
         },
         focusSearch: () => {
-          containerRef.current?.focus();
+          setIsSearchOpen(true);
+          requestAnimationFrame(() => searchInputRef.current?.focus());
         },
       }),
       [],
@@ -620,12 +776,7 @@ export const RemoteFileExplorer = forwardRef<FileExplorerHandle, Props>(
             style={{ paddingLeft: 6 + row.depth * 12 }}
             onClick={(event) => {
               if (event.detail > 1) return;
-              openRoot(row.path);
-              onChangeWorkingTree?.(row.path);
-            }}
-            onDoubleClick={() => {
-              openRoot(row.path);
-              onChangeWorkingTree?.(row.path);
+              void openParentRoot();
             }}
             onDragOver={(e) =>
               handleDragOverTarget(
@@ -658,14 +809,24 @@ export const RemoteFileExplorer = forwardRef<FileExplorerHandle, Props>(
             style={{ paddingLeft: 6 + row.depth * 12 }}
           >
             <span className="size-3.5 shrink-0" />
-            <img
-              src={folderIconUrl("", false)}
-              alt=""
-              className="size-4 shrink-0 opacity-70"
-            />
+            {row.pendingKind === "dir" ? (
+              <img
+                src={folderIconUrl("", false)}
+                alt=""
+                className="size-4 shrink-0 opacity-70"
+              />
+            ) : (
+              <img
+                src={fileIconUrl("")}
+                alt=""
+                className="size-4 shrink-0 opacity-70"
+              />
+            )}
             <InlineInput
               initial=""
-              placeholder="New folder"
+              placeholder={
+                row.pendingKind === "dir" ? "New folder" : "New file"
+              }
               onCommit={commitCreate}
               onCancel={() => setPendingCreate(null)}
             />
@@ -704,7 +865,10 @@ export const RemoteFileExplorer = forwardRef<FileExplorerHandle, Props>(
       };
 
       const handleEntryDoubleClick = () => {
-        if (!entry.isDir) return;
+        if (!entry.isDir) {
+          void openRemoteFile(entry);
+          return;
+        }
         openRoot(entry.path);
         onChangeWorkingTree?.(entry.path);
       };
@@ -732,7 +896,9 @@ export const RemoteFileExplorer = forwardRef<FileExplorerHandle, Props>(
                 data-sftp-is-dir={entry.isDir ? "true" : "false"}
                 draggable
                 onDragStart={(e) => handleDragStartEntry(entry, e)}
-                onDragOver={(e) => handleDragOverTarget(targetForEntry(entry), e)}
+                onDragOver={(e) =>
+                  handleDragOverTarget(targetForEntry(entry), e)
+                }
                 onDrop={(e) => handleDropTarget(targetForEntry(entry), e)}
                 onDragEnd={() => {
                   setDragSourcePaths([]);
@@ -778,7 +944,13 @@ export const RemoteFileExplorer = forwardRef<FileExplorerHandle, Props>(
               <>
                 <ContextMenuItem
                   className={COMPACT_ITEM}
-                  onSelect={() => beginCreate(entry.path)}
+                  onSelect={() => beginCreate(entry.path, "file")}
+                >
+                  New File
+                </ContextMenuItem>
+                <ContextMenuItem
+                  className={COMPACT_ITEM}
+                  onSelect={() => beginCreate(entry.path, "dir")}
                 >
                   New Folder
                 </ContextMenuItem>
@@ -864,194 +1036,266 @@ export const RemoteFileExplorer = forwardRef<FileExplorerHandle, Props>(
           if (!(e.metaKey || e.ctrlKey)) return;
           if ((e.key === "x" || e.key === "X") && selectedEntry) {
             e.preventDefault();
-            setRemoteClipboard({ operation: "cut", paths: [selectedEntry.path] });
+            setRemoteClipboard({
+              operation: "cut",
+              paths: [selectedEntry.path],
+            });
             return;
           }
           if ((e.key === "c" || e.key === "C") && selectedEntry) {
             e.preventDefault();
-            setRemoteClipboard({ operation: "copy", paths: [selectedEntry.path] });
+            setRemoteClipboard({
+              operation: "copy",
+              paths: [selectedEntry.path],
+            });
             return;
           }
           if ((e.key === "v" || e.key === "V") && remoteClipboard) {
             e.preventDefault();
             pasteInto(
-              selectedEntry ? targetForEntry(selectedEntry).targetDir : rootPath,
+              selectedEntry
+                ? targetForEntry(selectedEntry).targetDir
+                : rootPath,
             );
           }
         }}
       >
-        <div className="grid shrink-0 gap-2 border-b border-border/60 px-2 py-2">
-          <div className="flex min-w-0 items-center gap-1.5">
-            <Button
-              type="button"
-              size="icon"
-              variant="ghost"
-              className="size-7 rounded-md text-muted-foreground hover:text-foreground"
-              title="Parent directory"
-              disabled={busy}
-              onClick={() => openRoot(parentRemotePath(rootPath))}
-            >
-              <HugeiconsIcon icon={ArrowUp01Icon} size={14} strokeWidth={2} />
-            </Button>
-            <Input
-              value={pathInput}
-              onChange={(e) => setPathInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") openRoot(pathInput);
-              }}
-              className="h-8 min-w-0 rounded-lg bg-background/60 text-xs"
-              aria-label="Remote path"
+        <div className="flex h-8 shrink-0 items-center gap-1 border-b border-border/60 px-2">
+          <span
+            className="flex flex-1 items-center truncate text-xs font-medium text-foreground/80"
+            title={rootPath}
+          >
+            <img
+              src={folderIconUrl(basename(rootPath), false)}
+              alt=""
+              height={15}
+              width={15}
+              className="mx-1.5"
             />
-            <Button
-              type="button"
-              size="icon"
-              variant="ghost"
-              className="size-7 rounded-md text-muted-foreground hover:text-foreground"
-              title="Refresh"
-              disabled={busy}
-              onClick={() => refresh(rootPath)}
-            >
-              <HugeiconsIcon icon={Refresh01Icon} size={14} strokeWidth={2} />
-            </Button>
-          </div>
-          <div className="flex min-w-0 items-center gap-1.5">
-            <ToolbarButton
-              icon={ComputerTerminal02Icon}
-              label="SSH terminal"
-              onClick={() => onOpenTerminal(host)}
-            />
-            <ToolbarButton
-              icon={Upload01Icon}
-              label="Upload file"
-              disabled={busy}
-              onClick={() => void uploadInto(uploadTarget)}
-            />
-            <ToolbarButton
-              icon={Download01Icon}
-              label="Download"
-              disabled={busy || !selectedEntry || selectedEntry.isDir}
-              onClick={() => {
-                if (selectedEntry) void downloadEntry(selectedEntry);
-              }}
-            />
-            <ToolbarButton
-              icon={FolderAddIcon}
-              label="New folder"
-              disabled={busy}
-              onClick={() => beginCreate(uploadTarget)}
-            />
-            <ToolbarButton
-              icon={Delete02Icon}
-              label="Delete"
-              disabled={busy || !selectedEntry}
-              onClick={() => {
-                if (selectedEntry) void deleteEntry(selectedEntry);
-              }}
-            />
-          </div>
-          {error ? (
-            <div className="rounded-md border border-destructive/20 bg-destructive/10 px-2 py-1.5 text-[11px] text-destructive">
-              {error}
-            </div>
-          ) : null}
+            {basename(rootPath) || rootPath}
+          </span>
+
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-6 text-muted-foreground hover:text-foreground"
+            onClick={() => setIsSearchOpen((v) => !v)}
+            title="Search files"
+            aria-label="Search files"
+          >
+            <HugeiconsIcon icon={Search01Icon} size={13} strokeWidth={2} />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-6 text-muted-foreground hover:text-foreground"
+            disabled={busy}
+            onClick={() => beginCreate(rootPath, "file")}
+            title="New file"
+          >
+            <HugeiconsIcon icon={FileAddIcon} size={13} strokeWidth={2} />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-6 text-muted-foreground hover:text-foreground"
+            disabled={busy}
+            onClick={() => beginCreate(rootPath, "dir")}
+            title="New folder"
+          >
+            <HugeiconsIcon icon={FolderAddIcon} size={13} strokeWidth={2} />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-6 text-muted-foreground hover:text-foreground"
+            disabled={busy}
+            onClick={() => refresh(rootPath)}
+            title="Refresh"
+          >
+            <HugeiconsIcon icon={Refresh01Icon} size={12} strokeWidth={2} />
+          </Button>
         </div>
 
-        <ContextMenu>
-          <ContextMenuTrigger asChild>
-            <div
-              data-sftp-drop-root
-              onDragOver={(e) =>
-                handleDragOverTarget(
-                  { hoverPath: rootPath, targetDir: rootPath, expandPath: null },
-                  e,
-                )
-              }
-              onDrop={(e) =>
-                handleDropTarget(
-                  { hoverPath: rootPath, targetDir: rootPath, expandPath: null },
-                  e,
-                )
-              }
-              className={cn(
-                "min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden px-1 py-1 [scrollbar-gutter:stable]",
-                dropTargetPath === rootPath && "bg-primary/[0.06]",
-              )}
-            >
-              {rows.length === 0 ? (
-                <div className="px-3 py-8 text-center text-xs text-muted-foreground">
-                  Loading
-                </div>
-              ) : (
-                rows.map((row) => <div key={row.key}>{renderRow(row)}</div>)
-              )}
-            </div>
-          </ContextMenuTrigger>
-          <ContextMenuContent className={COMPACT_CONTENT}>
-            <ContextMenuItem
-              className={COMPACT_ITEM}
-              onSelect={() => onOpenTerminal(host)}
-            >
-              SSH Terminal
-            </ContextMenuItem>
-            <ContextMenuSeparator />
-            <ContextMenuItem
-              className={COMPACT_ITEM}
-              disabled={!remoteClipboard}
-              onSelect={() => pasteInto(rootPath)}
-            >
-              Paste
-            </ContextMenuItem>
-            <ContextMenuSeparator />
-            <ContextMenuItem
-              className={COMPACT_ITEM}
-              onSelect={() => beginCreate(rootPath)}
-            >
-              New Folder
-            </ContextMenuItem>
-            <ContextMenuItem
-              className={COMPACT_ITEM}
-              onSelect={() => void uploadInto(rootPath)}
-            >
-              Upload File
-            </ContextMenuItem>
-            <ContextMenuItem
-              className={COMPACT_ITEM}
-              onSelect={() => refresh(rootPath)}
-            >
-              Refresh
-            </ContextMenuItem>
-          </ContextMenuContent>
-        </ContextMenu>
+        {isSearchOpen ? (
+          <div className="relative shrink-0 px-2 py-1.5">
+            <HugeiconsIcon
+              icon={Search01Icon}
+              size={13}
+              strokeWidth={2}
+              className="absolute top-1/2 left-4 -translate-y-1/2 text-muted-foreground"
+            />
+            <Input
+              ref={searchInputRef}
+              value={remoteSearchQuery}
+              onChange={(e) => setRemoteSearchQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setIsSearchOpen(false);
+                }
+              }}
+              placeholder="Search files..."
+              className="h-7 pr-7 pl-6.5 text-xs"
+            />
+            {remoteSearchQuery ? (
+              <button
+                type="button"
+                onClick={() => setRemoteSearchQuery("")}
+                className="absolute top-1/2 right-3.5 -translate-y-1/2 rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+                aria-label="Clear search"
+              >
+                <HugeiconsIcon icon={Cancel01Icon} size={11} strokeWidth={2} />
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+
+        {error ? (
+          <div className="shrink-0 border-b border-destructive/20 bg-destructive/10 px-2 py-1 text-[11px] text-destructive">
+            {error}
+          </div>
+        ) : null}
+
+        {isSearchActive ? (
+          <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden py-1 [scrollbar-gutter:stable]">
+            {remoteSearchQuery.trim().length < 2 ? (
+              <div className="px-3 py-2 text-[11px] text-muted-foreground">
+                Type at least 2 characters
+              </div>
+            ) : remoteSearchBusy && remoteSearchResults.length === 0 ? (
+              <div className="px-3 py-2 text-[11px] text-muted-foreground">
+                Searching...
+              </div>
+            ) : remoteSearchResults.length === 0 ? (
+              <div className="px-3 py-2 text-[11px] text-muted-foreground">
+                No matches
+              </div>
+            ) : (
+              remoteSearchResults.map((entry) => (
+                <button
+                  key={entry.path}
+                  type="button"
+                  title={entry.path}
+                  onClick={() => {
+                    if (entry.isDir) {
+                      openRoot(entry.path);
+                      onChangeWorkingTree?.(entry.path);
+                    } else {
+                      void openRemoteFile(entry);
+                    }
+                  }}
+                  className="flex w-full items-center gap-1.5 px-2 py-1 text-left text-xs text-foreground/80 transition-colors hover:bg-accent/50"
+                >
+                  <img
+                    src={
+                      entry.isDir
+                        ? folderIconUrl(entry.name, false)
+                        : fileIconUrl(entry.name)
+                    }
+                    alt=""
+                    className="size-3.5 shrink-0"
+                  />
+                  <span className="truncate">{entry.name}</span>
+                  <span className="ml-auto truncate text-[10px] text-muted-foreground">
+                    {relativeRemotePath(rootPath, entry.path)}
+                  </span>
+                </button>
+              ))
+            )}
+            {remoteSearchTruncated && remoteSearchResults.length > 0 ? (
+              <div className="px-3 py-1.5 text-[10px] text-muted-foreground">
+                Showing partial results - refine your query.
+              </div>
+            ) : null}
+          </div>
+        ) : (
+          <ContextMenu>
+            <ContextMenuTrigger asChild>
+              <div
+                data-sftp-drop-root
+                onDragOver={(e) =>
+                  handleDragOverTarget(
+                    {
+                      hoverPath: rootPath,
+                      targetDir: rootPath,
+                      expandPath: null,
+                    },
+                    e,
+                  )
+                }
+                onDrop={(e) =>
+                  handleDropTarget(
+                    {
+                      hoverPath: rootPath,
+                      targetDir: rootPath,
+                      expandPath: null,
+                    },
+                    e,
+                  )
+                }
+                className={cn(
+                  "min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden px-1 py-1 [scrollbar-gutter:stable]",
+                  dropTargetPath === rootPath && "bg-primary/[0.06]",
+                )}
+              >
+                {rows.length === 0 ? (
+                  <div className="px-3 py-8 text-center text-xs text-muted-foreground">
+                    Loading
+                  </div>
+                ) : (
+                  rows.map((row) => <div key={row.key}>{renderRow(row)}</div>)
+                )}
+              </div>
+            </ContextMenuTrigger>
+            <ContextMenuContent className={COMPACT_CONTENT}>
+              <ContextMenuItem
+                className={COMPACT_ITEM}
+                onSelect={() => onOpenTerminal(host)}
+              >
+                SSH Terminal
+              </ContextMenuItem>
+              <ContextMenuSeparator />
+              <ContextMenuItem
+                className={COMPACT_ITEM}
+                disabled={!remoteClipboard}
+                onSelect={() => pasteInto(rootPath)}
+              >
+                Paste
+              </ContextMenuItem>
+              <ContextMenuSeparator />
+              <ContextMenuItem
+                className={COMPACT_ITEM}
+                onSelect={() => beginCreate(rootPath, "file")}
+              >
+                New File
+              </ContextMenuItem>
+              <ContextMenuItem
+                className={COMPACT_ITEM}
+                onSelect={() => beginCreate(rootPath, "dir")}
+              >
+                New Folder
+              </ContextMenuItem>
+              <ContextMenuItem
+                className={COMPACT_ITEM}
+                onSelect={() => void uploadInto(rootPath)}
+              >
+                Upload File
+              </ContextMenuItem>
+              <ContextMenuItem
+                className={COMPACT_ITEM}
+                onSelect={() => refresh(rootPath)}
+              >
+                Refresh
+              </ContextMenuItem>
+            </ContextMenuContent>
+          </ContextMenu>
+        )}
       </div>
     );
   },
 );
-
-function ToolbarButton({
-  icon,
-  label,
-  disabled,
-  onClick,
-}: {
-  icon: Parameters<typeof HugeiconsIcon>[0]["icon"];
-  label: string;
-  disabled?: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <Button
-      type="button"
-      size="icon"
-      variant="ghost"
-      className="size-7 rounded-md text-muted-foreground hover:text-foreground"
-      title={label}
-      disabled={disabled}
-      onClick={onClick}
-    >
-      <HugeiconsIcon icon={icon} size={14} strokeWidth={2} />
-    </Button>
-  );
-}
 
 function buildRows(
   rootPath: string,
@@ -1076,6 +1320,7 @@ function buildRows(
         kind: "pending",
         key: `pending:${parentPath}`,
         parentPath,
+        pendingKind: pendingCreate.kind,
         depth,
       });
     }
@@ -1139,14 +1384,23 @@ function joinRemotePath(base: string, name: string): string {
 
 function parentRemotePath(path: string): string {
   const clean = path.trim();
-  if (!clean || clean === "." || clean === "/") return ".";
+  if (!clean || clean === ".") return ".";
+  if (clean === "/") return "/";
   const withoutTrailing = clean.replace(/\/+$/, "");
   const idx = withoutTrailing.lastIndexOf("/");
-  if (idx <= 0) return ".";
+  if (idx === 0) return "/";
+  if (idx < 0) return ".";
   return withoutTrailing.slice(0, idx);
 }
 
 function basename(path: string): string {
   const parts = path.split(/[\\/]/).filter(Boolean);
   return parts.length ? parts[parts.length - 1] : "";
+}
+
+function relativeRemotePath(root: string, path: string): string {
+  const cleanRoot = root.replace(/\/+$/, "");
+  if (!cleanRoot || cleanRoot === "." || path === cleanRoot) return path;
+  const prefix = `${cleanRoot}/`;
+  return path.startsWith(prefix) ? path.slice(prefix.length) : path;
 }
