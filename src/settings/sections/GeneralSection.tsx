@@ -6,7 +6,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
-import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import {
   Tooltip,
@@ -14,9 +13,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { cn } from "@/lib/utils";
 import { usePreferencesStore } from "@/modules/settings/preferences";
-import type { ThemePref } from "@/modules/settings/store";
 import {
   TERMINAL_FONT_SIZES,
   TERMINAL_SCROLLBACK_PRESETS,
@@ -32,41 +29,18 @@ import {
   setTerminalScrollback,
   setTerminalWebglEnabled,
   setVimMode,
-  setZoomLevel,
 } from "@/modules/settings/store";
-import { useTheme } from "@/modules/theme";
-import {
-  ComputerIcon,
-  Moon02Icon,
-  Sun03Icon,
-} from "@hugeicons/core-free-icons";
-import { HugeiconsIcon } from "@hugeicons/react";
 import { disable, enable, isEnabled } from "@tauri-apps/plugin-autostart";
 import { useEffect, useState } from "react";
 import { SectionHeader } from "../components/SectionHeader";
 import { SettingRow } from "../components/SettingRow";
 
-const APPEARANCE: {
-  id: ThemePref;
-  label: string;
-  icon: typeof ComputerIcon;
-}[] = [
-  { id: "system", label: "System", icon: ComputerIcon },
-  { id: "light", label: "Light", icon: Sun03Icon },
-  { id: "dark", label: "Dark", icon: Moon02Icon },
-];
-
 const LETTER_SPACINGS = [-4, -3, -2, -1, 0, 1, 2, 3, 4] as const;
-const ZOOM_MIN = 0.5;
-const ZOOM_MAX = 2.0;
-const ZOOM_STEP = 0.05;
 const AUTO_SAVE_STEP = 100;
 const AUTO_SAVE_MIN = 100;
 const AUTO_SAVE_MAX = 60000;
 
 export function GeneralSection() {
-  const { mode, setMode } = useTheme();
-
   const autostart = usePreferencesStore((s) => s.autostart);
   const restoreWindowState = usePreferencesStore((s) => s.restoreWindowState);
   const vimMode = usePreferencesStore((s) => s.vimMode);
@@ -82,7 +56,6 @@ export function GeneralSection() {
   );
   const terminalFontSize = usePreferencesStore((s) => s.terminalFontSize);
   const terminalScrollback = usePreferencesStore((s) => s.terminalScrollback);
-  const zoomLevel = usePreferencesStore((s) => s.zoomLevel);
   const agentNotifications = usePreferencesStore((s) => s.agentNotifications);
 
   useEffect(() => {
@@ -114,55 +87,8 @@ export function GeneralSection() {
     <div className="flex flex-col gap-6">
       <SectionHeader
         title="General"
-        description="Mode, editor, and startup."
+        description="Editor, terminal, and startup."
       />
-
-      <div className="flex flex-col gap-2">
-        <Label>Appearance</Label>
-        <div className="grid grid-cols-3 gap-2">
-          {APPEARANCE.map((o) => (
-            <button
-              key={o.id}
-              type="button"
-              onClick={() => setMode(o.id)}
-              className={cn(
-                "group flex h-20 flex-col items-center justify-center gap-1.5 rounded-lg border bg-card transition-all",
-                mode === o.id
-                  ? "border-foreground/60 ring-1 ring-foreground/20"
-                  : "border-border/60 hover:border-border",
-              )}
-            >
-              <HugeiconsIcon icon={o.icon} size={18} strokeWidth={1.5} />
-              <span className="text-[11.5px]">{o.label}</span>
-            </button>
-          ))}
-        </div>
-        <p className="text-[11px] text-muted-foreground">
-          For theme, background and customization, see the{" "}
-          <strong className="font-medium text-foreground">Themes</strong> tab.
-        </p>
-      </div>
-
-      <div className="flex flex-col gap-2">
-        <Label>Zoom</Label>
-        <div className="flex flex-col gap-3 rounded-lg border border-border/60 p-3">
-          <div className="flex items-center justify-between gap-3">
-            <span className="text-[11.5px] text-muted-foreground">
-              UI zoom level
-            </span>
-            <span className="tabular-nums text-[11px] text-muted-foreground">
-              {Math.round(zoomLevel * 100)}%
-            </span>
-          </div>
-          <Slider
-            value={[zoomLevel]}
-            min={ZOOM_MIN}
-            max={ZOOM_MAX}
-            step={ZOOM_STEP}
-            onValueChange={(v) => void setZoomLevel(v[0] ?? 1)}
-          />
-        </div>
-      </div>
 
       <div className="flex flex-col gap-2">
         <Label>Editor</Label>
@@ -221,15 +147,12 @@ export function GeneralSection() {
                       ⓘ
                     </span>
                   </TooltipTrigger>
-                  <TooltipContent
-                    side="top"
-                    className="max-w-65 text-[11px]"
-                  >
-                    xterm's WebGL renderer caches glyphs in a GPU texture
-                    atlas. On some macOS setups (especially with Nerd Fonts),
-                    the atlas corrupts and terminal text becomes unreadable.
-                    Turn this off as a fallback — performance dips slightly,
-                    but text renders correctly via the DOM renderer.
+                  <TooltipContent side="top" className="max-w-65 text-[11px]">
+                    xterm's WebGL renderer caches glyphs in a GPU texture atlas.
+                    On some macOS setups (especially with Nerd Fonts), the atlas
+                    corrupts and terminal text becomes unreadable. Turn this off
+                    as a fallback — performance dips slightly, but text renders
+                    correctly via the DOM renderer.
                   </TooltipContent>
                 </Tooltip>
               </TooltipProvider>
@@ -284,7 +207,11 @@ export function GeneralSection() {
             </SelectTrigger>
             <SelectContent>
               {TERMINAL_FONT_SIZES.map((size) => (
-                <SelectItem key={size} value={String(size)} className="text-[12px]">
+                <SelectItem
+                  key={size}
+                  value={String(size)}
+                  className="text-[12px]"
+                >
                   {size} px
                 </SelectItem>
               ))}
@@ -418,4 +345,3 @@ function AutoSaveDelayInput({
     </SettingRow>
   );
 }
-

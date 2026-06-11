@@ -45,10 +45,10 @@
     --radius-sm: calc(var(--radius) * 0.6);
     --radius-md: calc(var(--radius) * 0.8);
     --radius-lg: var(--radius);
-    --radius-xl: calc(var(--radius) * 1.4);
-    --radius-2xl: calc(var(--radius) * 1.8);
-    --radius-3xl: calc(var(--radius) * 2.2);
-    --radius-4xl: calc(var(--radius) * 2.6);
+    --radius-xl: var(--radius);
+    --radius-2xl: var(--radius);
+    --radius-3xl: var(--radius);
+    --radius-4xl: var(--radius);
 }
 
 :root {
@@ -166,7 +166,7 @@
 }
 
 html[data-chrome="borderless"] .omnitab-bg-surface {
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
 }
 .zoom-content {
   zoom: var(--app-zoom);
@@ -185,7 +185,7 @@ html[data-chrome="borderless"] body {
 html[data-chrome="borderless"] #root,
 html[data-chrome="borderless"] #settings-root {
   height: 100%;
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   overflow: hidden;
   border: 1px solid var(--border);
   background: var(--background);
@@ -257,7 +257,7 @@ textarea,
   width: 0.85em;
   height: 0.85em;
   margin-right: 0.35em;
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   border: 1px solid rgba(128, 128, 128, 0.4);
   vertical-align: middle;
   position: relative;
@@ -275,6 +275,84 @@ textarea,
   cursor: pointer;
 }
 
+/* Keep shadcn registry updates theme-radius aware without editing generated
+ * components. Circular controls remain opt-in in their component markup. */
+[data-slot="button"],
+[data-slot="button-group"],
+[data-slot="toggle"],
+[data-slot="toggle-group"],
+[data-slot="tabs-list"],
+[data-slot="tabs-trigger"],
+[data-slot="input"],
+[data-slot="input-group"],
+[data-slot="input-otp"],
+[data-slot="native-select"],
+[data-slot="textarea"],
+[data-slot="select-trigger"],
+[data-slot="select-content"],
+[data-slot="select-item"],
+[data-slot="combobox-trigger"],
+[data-slot="combobox-content"],
+[data-slot="combobox-item"],
+[data-slot="combobox-chip"],
+[data-slot="dropdown-menu-content"],
+[data-slot="dropdown-menu-sub-content"],
+[data-slot="dropdown-menu-item"],
+[data-slot="dropdown-menu-checkbox-item"],
+[data-slot="dropdown-menu-radio-item"],
+[data-slot="dropdown-menu-sub-trigger"],
+[data-slot="context-menu-content"],
+[data-slot="context-menu-sub-content"],
+[data-slot="context-menu-item"],
+[data-slot="context-menu-checkbox-item"],
+[data-slot="context-menu-radio-item"],
+[data-slot="context-menu-sub-trigger"],
+[data-slot="menubar"],
+[data-slot="menubar-content"],
+[data-slot="menubar-sub-content"],
+[data-slot="menubar-trigger"],
+[data-slot="menubar-item"],
+[data-slot="menubar-checkbox-item"],
+[data-slot="menubar-radio-item"],
+[data-slot="menubar-sub-trigger"],
+[data-slot="popover-content"],
+[data-slot="hover-card-content"],
+[data-slot="tooltip-content"],
+[data-slot="dialog-content"],
+[data-slot="alert-dialog-content"],
+[data-slot="drawer-content"]::before,
+[data-slot="card"],
+[data-slot="alert"],
+[data-slot="empty"],
+[data-slot="item"],
+[data-slot="skeleton"],
+[data-slot="progress"],
+[data-slot="scroll-area-thumb"],
+[data-slot="slider-track"],
+[data-slot="slider-thumb"],
+[data-slot="switch"],
+[data-slot="switch-thumb"],
+[data-slot="checkbox"],
+[data-slot="field-label"],
+[data-slot="navigation-menu-trigger"],
+[data-slot="navigation-menu-content"],
+[data-slot="navigation-menu-viewport"],
+[data-slot="navigation-menu-link"],
+[data-slot="chart-tooltip"] {
+  border-radius: var(--radius) !important;
+}
+
+[data-slot="slider-track"],
+[data-slot="progress"],
+[data-slot="scroll-area-thumb"] {
+  border-radius: var(--radius-sm) !important;
+}
+
+[data-slot="slider-thumb"],
+[data-slot="switch-thumb"],
+[data-slot="checkbox"] {
+  border-radius: var(--radius-md) !important;
+}
 
 .no-scrollbar {
   scrollbar-width: none !important;

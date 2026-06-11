@@ -1,6 +1,6 @@
 [package]
 name = "omnitab"
-version = "0.7.9"
+version = "0.8.0"
 description = "OmniTab - a lightweight dev workspace"
 authors = ["Almyyyy"]
 license = "Apache-2.0"

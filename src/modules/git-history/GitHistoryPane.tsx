@@ -749,7 +749,7 @@ const CommitRow = memo(function CommitRow({
         title={commit.authorEmail || commit.author}
       >
         <span
-          className="inline-flex size-3.5 shrink-0 items-center justify-center rounded-[3px] font-mono text-[8.5px] font-bold uppercase tabular-nums text-background"
+          className="inline-flex size-3.5 shrink-0 items-center justify-center rounded-sm font-mono text-[8.5px] font-bold uppercase tabular-nums text-background"
           style={{
             backgroundColor: authorTint(commit.authorEmail || commit.author),
           }}
