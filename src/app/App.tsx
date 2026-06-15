@@ -1,9 +1,14 @@
+import { invoke } from "@tauri-apps/api/core";
+import { emit, emitTo, listen } from "@tauri-apps/api/event";
+import { homeDir } from "@tauri-apps/api/path";
 import {
-  ResizableHandle,
-  ResizablePanel,
-  ResizablePanelGroup,
-} from "@/components/ui/resizable";
-import { TooltipProvider } from "@/components/ui/tooltip";
+  getAllWebviewWindows,
+  getCurrentWebviewWindow,
+} from "@tauri-apps/api/webviewWindow";
+import { cursorPosition } from "@tauri-apps/api/window";
+import { AnimatePresence, motion } from "motion/react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { PanelImperativeHandle } from "react-resizable-panels";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -14,100 +19,108 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import {
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+} from "@/components/ui/resizable";
+import { Toaster } from "@/components/ui/sonner";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import { getLaunchDir } from "@/lib/launchDir";
+import { quoteShellArg } from "@/lib/shellQuote";
+import { useZoom } from "@/lib/useZoom";
 import { cn } from "@/lib/utils";
 import { AgentNotificationsBridge } from "@/modules/agents";
 import { firePendingReviewForSession } from "@/modules/agents/lib/review";
 import { useManagedAgentsStore } from "@/modules/agents/store/managedAgentsStore";
-import { Toaster } from "@/components/ui/sonner";
 import {
   AgentRunBridge,
   AiInputBar,
   AiInputBarConnect,
   AiMiniWindow,
-  getAllKeys,
   getAllCustomEndpointKeys,
+  getAllKeys,
   hasAnyKey,
   LocalAgentNotificationsBridge,
   SelectionAskAi,
   useChatStore,
 } from "@/modules/ai";
 import { AiComposerProvider } from "@/modules/ai/lib/composer";
-import { redactSensitive } from "@/modules/ai/lib/redact";
 import { native } from "@/modules/ai/lib/native";
+import { redactSensitive } from "@/modules/ai/lib/redact";
 import { useAgentsStore } from "@/modules/ai/store/agentsStore";
 import { useSnippetsStore } from "@/modules/ai/store/snippetsStore";
-import {
-  AiDiffStack,
-  EditorStack,
-  GitDiffStack,
-  NewEditorDialog,
-  type EditorPaneHandle,
-} from "@/modules/editor";
-import {
-  GitHistoryStack,
-  type GitHistorySearchHandle,
-} from "@/modules/git-history";
-import {
-  buildSshCommand,
-  HostDialog,
-  HostsPanel,
-  isSshPasswordPrompt,
-  readSelectedSource,
-  sourceForHost,
-  useHostsStore,
-  writeSelectedSource,
-  type HostSourceValue,
-  type HostProfile,
-} from "@/modules/hosts";
-import { getHostPassword } from "@/modules/hosts/lib/passwords";
-import { getLaunchDir } from "@/lib/launchDir";
-import { quoteShellArg } from "@/lib/shellQuote";
-import { useZoom } from "@/lib/useZoom";
-import { type FileExplorerHandle } from "@/modules/explorer";
 import {
   CommandPalette,
   createCommandPaletteActions,
 } from "@/modules/command-palette";
+import {
+  AiDiffStack,
+  type EditorPaneHandle,
+  EditorStack,
+  GitDiffStack,
+  NewEditorDialog,
+} from "@/modules/editor";
+import { type FileExplorerHandle } from "@/modules/explorer";
 import {
   listenFsChanged,
   parentDir,
   watchAdd,
   watchRemove,
 } from "@/modules/explorer/lib/watch";
+import {
+  type GitHistorySearchHandle,
+  GitHistoryStack,
+} from "@/modules/git-history";
 import { Header } from "@/modules/header";
+import {
+  buildSshCommand,
+  HostDialog,
+  type HostProfile,
+  type HostSourceValue,
+  HostsPanel,
+  isSshPasswordPrompt,
+  readSelectedSource,
+  sourceForHost,
+  useHostsStore,
+  writeSelectedSource,
+} from "@/modules/hosts";
+import { getHostPassword } from "@/modules/hosts/lib/passwords";
 import { MarkdownStack } from "@/modules/markdown";
-import { PreviewStack, type PreviewPaneHandle } from "@/modules/preview";
+import { type PreviewPaneHandle, PreviewStack } from "@/modules/preview";
 import { openSettingsWindow } from "@/modules/settings/openSettingsWindow";
 import { usePreferencesStore } from "@/modules/settings/preferences";
 import { onKeysChanged } from "@/modules/settings/store";
 import {
-  ShortcutsDialog,
-  useGlobalShortcuts,
   type ShortcutHandlers,
   type ShortcutId,
+  ShortcutsDialog,
+  useGlobalShortcuts,
 } from "@/modules/shortcuts";
 import { SidebarRail, type SidebarViewId } from "@/modules/sidebar";
 import { SourceControlPanel, useSourceControl } from "@/modules/source-control";
 import { StatusBar } from "@/modules/statusbar";
 import {
+  parseTabTransferPayload,
   TAB_DRAG_ENDED_EVENT,
   TAB_DRAG_HOVER_EVENT,
+  TAB_DRAG_RELEASE_EVENT,
   TAB_DRAG_STARTED_EVENT,
   TAB_TRANSFER_ACCEPTED_EVENT,
   TAB_TRANSFER_EVENT,
   TAB_TRANSFER_READY_EVENT,
-  parseTabTransferPayload,
-  useTabs,
-  useWindowTitle,
-  useWorkspaceCwd,
   type Tab,
   type TabDragHoverSignal,
+  type TabDragReleaseSignal,
   type TabDragSignal,
   type TabDropEdge,
   type TabStripMetrics,
   type TabTransferAccepted,
   type TabTransferPayload,
   type TabTransferReady,
+  useTabs,
+  useWindowTitle,
+  useWorkspaceCwd,
 } from "@/modules/tabs";
 import { labelFor } from "@/modules/tabs/lib/tabLabel";
 import {
@@ -119,35 +132,24 @@ import {
   hasLeaf,
   leafHasForegroundProcess,
   leafIds,
+  type PaneNode,
   respawnSession,
   TerminalHostToolbar,
+  type TerminalPaneHandle,
   TerminalStack,
+  useTerminalFileDrop,
   whenSessionReady,
   writeToSession,
-  type TerminalPaneHandle,
-  type PaneNode,
-  useTerminalFileDrop,
 } from "@/modules/terminal";
 import { ThemeProvider } from "@/modules/theme";
 import { UpdaterDialog } from "@/modules/updater";
+import { openMainWindow } from "@/modules/windows";
 import {
   getWslHome,
   LOCAL_WORKSPACE,
   useWorkspaceEnvStore,
   type WorkspaceEnv,
 } from "@/modules/workspace";
-import { openMainWindow } from "@/modules/windows";
-import { invoke } from "@tauri-apps/api/core";
-import { emit, emitTo, listen } from "@tauri-apps/api/event";
-import { homeDir } from "@tauri-apps/api/path";
-import { cursorPosition } from "@tauri-apps/api/window";
-import {
-  getAllWebviewWindows,
-  getCurrentWebviewWindow,
-} from "@tauri-apps/api/webviewWindow";
-import { AnimatePresence, motion } from "motion/react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { PanelImperativeHandle } from "react-resizable-panels";
 
 type TuiWaitResult = "ready" | "gone" | "timeout";
 
@@ -238,31 +240,6 @@ type ExternalTabDragHover = {
     x: number;
     y: number;
   };
-};
-
-type DetachedTabDragState = {
-  transferId: string;
-  originWindow: string;
-  grabOffset: { x: number; y: number };
-  floatingWindow: boolean;
-  nativeWindowDrag: boolean;
-};
-
-type PendingDetachedTabDragWindow = {
-  transferId: string;
-  label: string;
-};
-
-type PendingDetachedTabDragHandoff = {
-  transferId: string;
-  targetWindow: string;
-};
-
-type PrewarmedDetachedTabDragWindow = {
-  transferId: string;
-  label: string | null;
-  promise: Promise<string>;
-  used: boolean;
 };
 
 const TAB_STRIP_SELECTOR = "[data-omnitab-tab-strip]";
@@ -393,15 +370,6 @@ export default function App() {
   const [tabDragActive, setTabDragActive] = useState(false);
   const tabDragActiveRef = useRef(false);
   const activeDragTransferIdRef = useRef<string | null>(null);
-  const focusedTabDragTargetRef = useRef<string | null>(null);
-  const detachedTabDragRef = useRef<DetachedTabDragState | null>(null);
-  const openingDetachedTabDragRef = useRef<string | null>(null);
-  const pendingDetachedTabDragWindowRef =
-    useRef<PendingDetachedTabDragWindow | null>(null);
-  const pendingDetachedTabDragHandoffRef =
-    useRef<PendingDetachedTabDragHandoff | null>(null);
-  const prewarmedDetachedTabDragWindowRef =
-    useRef<PrewarmedDetachedTabDragWindow | null>(null);
   const [externalTabDragHover, setExternalTabDragHover] =
     useState<ExternalTabDragHover | null>(null);
   const externalTabDragHoverRef = useRef<ExternalTabDragHover | null>(null);
@@ -804,35 +772,12 @@ export default function App() {
     [],
   );
 
-  const closePrewarmedDetachedWindow = useCallback((transferId: string) => {
-    const prewarmed = prewarmedDetachedTabDragWindowRef.current;
-    if (!prewarmed || prewarmed.transferId !== transferId || prewarmed.used) {
-      return;
-    }
-    prewarmedDetachedTabDragWindowRef.current = null;
-    void prewarmed.promise
-      .then(async (label) => {
-        const windows = await getAllWebviewWindows();
-        await windows
-          .find((w) => w.label === label)
-          ?.close()
-          .catch(() => {});
-      })
-      .catch(() => {});
-  }, []);
-
   const setGlobalTabDragActive = useCallback(
     (transferId: string | null, active: boolean) => {
       activeDragTransferIdRef.current = active ? transferId : null;
       tabDragActiveRef.current = active;
       setTabDragActive(active);
       if (!active) {
-        focusedTabDragTargetRef.current = null;
-        detachedTabDragRef.current = null;
-        openingDetachedTabDragRef.current = null;
-        pendingDetachedTabDragWindowRef.current = null;
-        pendingDetachedTabDragHandoffRef.current = null;
-        prewarmedDetachedTabDragWindowRef.current = null;
         updateExternalTabDragHover(null);
       }
     },
@@ -856,9 +801,15 @@ export default function App() {
 
   const endGlobalTabDrag = useCallback(
     (transferId: string) => {
-      closePrewarmedDetachedWindow(transferId);
       if (activeDragTransferIdRef.current === transferId) {
         setGlobalTabDragActive(null, false);
+      }
+      acceptedTransfersRef.current.delete(transferId);
+      finishingTransfersRef.current.delete(transferId);
+      for (const [label, payload] of pendingNewWindowTransfersRef.current) {
+        if (payload.transferId === transferId) {
+          pendingNewWindowTransfersRef.current.delete(label);
+        }
       }
       void invoke("tab_drag_end", { transferId });
       void emit<TabDragSignal>(TAB_DRAG_ENDED_EVENT, {
@@ -866,56 +817,7 @@ export default function App() {
         sourceWindow: currentWindowLabel,
       });
     },
-    [closePrewarmedDetachedWindow, currentWindowLabel, setGlobalTabDragActive],
-  );
-
-  const handoffDetachedTabDrag = useCallback(
-    async (
-      payload: TabTransferPayload,
-      target: ResolvedTabDropTarget,
-    ): Promise<boolean> => {
-      const detached = detachedTabDragRef.current;
-      if (!detached || detached.transferId !== payload.transferId) {
-        return false;
-      }
-      if (
-        pendingDetachedTabDragHandoffRef.current?.transferId ===
-          payload.transferId &&
-        pendingDetachedTabDragHandoffRef.current.targetWindow ===
-          target.windowLabel
-      ) {
-        return true;
-      }
-      pendingDetachedTabDragHandoffRef.current = {
-        transferId: payload.transferId,
-        targetWindow: target.windowLabel,
-      };
-      const targetedPayload: TabTransferPayload = {
-        ...payload,
-        sourceWindow: currentWindowLabel,
-        targetTabId: target.targetId,
-        targetEdge: target.edge,
-        replaceTargetTabs: false,
-        detachedDrag: {
-          originWindow: detached.originWindow,
-          grabOffset: detached.grabOffset,
-          floatingWindow: false,
-        },
-      };
-      try {
-        await emitTo<TabTransferPayload>(
-          target.windowLabel,
-          TAB_TRANSFER_EVENT,
-          targetedPayload,
-        );
-        return true;
-      } catch (e) {
-        pendingDetachedTabDragHandoffRef.current = null;
-        console.warn("[omnitab] detached tab handoff failed:", e);
-        return false;
-      }
-    },
-    [currentWindowLabel],
+    [currentWindowLabel, setGlobalTabDragActive],
   );
 
   const publishTabDragHover = useCallback(
@@ -928,96 +830,8 @@ export default function App() {
         ]);
         const point: PhysicalPoint = { x: cursor.x, y: cursor.y };
         const liveLabels = new Set(allWindows.map((w) => w.label));
-        const detachedDrag =
-          detachedTabDragRef.current?.transferId === payload.transferId
-            ? detachedTabDragRef.current
-            : null;
-        const metricsForDrop = detachedDrag?.floatingWindow
-          ? storedMetrics.filter(
-              (metric) => metric.windowLabel !== currentWindowLabel,
-            )
-          : storedMetrics;
-        const tabStripLabels = new Set(
-          metricsForDrop
-            .map((metric) => metric.windowLabel)
-            .filter((label) => liveLabels.has(label)),
-        );
-        const windowContainsPoint = async (
-          win: (typeof allWindows)[number],
-        ) => {
-          const [position, size] = await Promise.all([
-            win.outerPosition(),
-            win.outerSize(),
-          ]);
-          return rectContainsPoint(
-            {
-              x: position.x,
-              y: position.y,
-              width: size.width,
-              height: size.height,
-            },
-            point,
-          );
-        };
-        const currentWindow = allWindows.find(
-          (w) => w.label === currentWindowLabel,
-        );
-        const insideCurrentWindow = currentWindow
-          ? await windowContainsPoint(currentWindow)
-          : false;
-        if (detachedDrag?.floatingWindow) {
-          focusedTabDragTargetRef.current = null;
-          const target = resolveTabDropTarget(
-            point,
-            metricsForDrop,
-            liveLabels,
-          );
-          if (target) {
-            await handoffDetachedTabDrag(payload, target);
-            return;
-          }
-          const signal: TabDragHoverSignal = {
-            transferId: payload.transferId,
-            sourceWindow: payload.sourceWindow,
-            targetWindow: null,
-            targetTabId: null,
-            targetEdge: "after",
-            point,
-            title: labelFor(payload.tab),
-          };
-          void emit<TabDragHoverSignal>(TAB_DRAG_HOVER_EVENT, signal);
-          return;
-        }
-        if (insideCurrentWindow) {
-          focusedTabDragTargetRef.current = null;
-        } else {
-          const focusTargets = await Promise.all(
-            allWindows
-              .filter(
-                (w) =>
-                  w.label !== currentWindowLabel && tabStripLabels.has(w.label),
-              )
-              .map(async (w) => {
-                const [visible, contains] = await Promise.all([
-                  w.isVisible().catch(() => true),
-                  windowContainsPoint(w),
-                ]);
-                return visible && contains ? w : null;
-              }),
-          );
-          const focusTarget = focusTargets.find((w) => w !== null);
-          if (!focusTarget) {
-            focusedTabDragTargetRef.current = null;
-          } else if (focusedTabDragTargetRef.current !== focusTarget.label) {
-            focusedTabDragTargetRef.current = focusTarget.label;
-            void focusTarget.setFocus().catch((e) => {
-              console.warn("[omnitab] tab drag target focus failed:", e);
-            });
-          }
-        }
-        const target = resolveTabDropTarget(point, metricsForDrop, liveLabels);
+        const target = resolveTabDropTarget(point, storedMetrics, liveLabels);
         if (
-          (!detachedDrag || !detachedDrag.floatingWindow) &&
           target?.windowLabel === currentWindowLabel &&
           payload.sourceWindow === currentWindowLabel
         ) {
@@ -1037,7 +851,7 @@ export default function App() {
         console.warn("[omnitab] tab drag hover failed:", e);
       }
     },
-    [currentWindowLabel, handoffDetachedTabDrag, moveTab],
+    [currentWindowLabel, moveTab],
   );
 
   const applyTabDragHover = useCallback(
@@ -1167,47 +981,10 @@ export default function App() {
       };
       const raw = JSON.stringify(payload);
       pendingTransfersRef.current.set(transferId, { tabId: id, payload });
-      if (tabsRef.current.length > 1) {
-        const cwd = tabPrimaryCwd(payload.tab) ?? inheritedCwdForNewTab();
-        const prewarmed: PrewarmedDetachedTabDragWindow = {
-          transferId,
-          label: null,
-          used: false,
-          promise: openMainWindow(cwd, {
-            detachedDrag: true,
-            deferShow: true,
-          }),
-        };
-        prewarmed.promise
-          .then((label) => {
-            if (
-              prewarmedDetachedTabDragWindowRef.current?.transferId ===
-              transferId
-            ) {
-              prewarmed.label = label;
-            } else if (!prewarmed.used) {
-              void getAllWebviewWindows()
-                .then((windows) =>
-                  windows.find((w) => w.label === label)?.close(),
-                )
-                .catch(() => {});
-            }
-          })
-          .catch((e) => {
-            if (
-              prewarmedDetachedTabDragWindowRef.current?.transferId ===
-              transferId
-            ) {
-              prewarmedDetachedTabDragWindowRef.current = null;
-            }
-            console.warn("[omnitab] prewarm detached tab window failed:", e);
-          });
-        prewarmedDetachedTabDragWindowRef.current = prewarmed;
-      }
       startGlobalTabDrag(payload, raw);
       return raw;
     },
-    [currentWindowLabel, inheritedCwdForNewTab, startGlobalTabDrag],
+    [currentWindowLabel, startGlobalTabDrag],
   );
 
   const acceptTransferredTab = useCallback(
@@ -1224,71 +1001,25 @@ export default function App() {
       }
       if (acceptedTransfersRef.current.has(payload.transferId)) return;
       acceptedTransfersRef.current.add(payload.transferId);
-      const adoptedId = adoptTransferredTab(
+      adoptTransferredTab(
         payload.tab,
         targetId,
         edge,
         payload.replaceTargetTabs === true,
       );
-      if (payload.detachedDrag) {
-        const ownerPayload: TabTransferPayload = {
-          ...payload,
-          sourceWindow: currentWindowLabel,
-          sourceTabId: adoptedId,
-          targetTabId: undefined,
-          targetEdge: undefined,
-          replaceTargetTabs: false,
-          detachedDrag: undefined,
-        };
-        pendingTransfersRef.current.set(payload.transferId, {
-          tabId: adoptedId,
-          payload: ownerPayload,
+      void currentWindowRef.current
+        .show()
+        .then(() => currentWindowRef.current.setFocus())
+        .catch((e) => {
+          console.warn("[omnitab] accepted tab transfer focus failed:", e);
         });
-        if (payload.detachedDrag.floatingWindow !== false) {
-          detachedTabDragRef.current = {
-            transferId: payload.transferId,
-            originWindow: payload.detachedDrag.originWindow,
-            grabOffset: payload.detachedDrag.grabOffset,
-            floatingWindow: true,
-            nativeWindowDrag: true,
-          };
-          void currentWindowRef.current
-            .show()
-            .then(() => currentWindowRef.current.startDragging())
-            .catch((e) => {
-              const current = detachedTabDragRef.current;
-              if (current?.transferId === payload.transferId) {
-                current.nativeWindowDrag = false;
-              }
-              console.warn("[omnitab] detached tab window drag failed:", e);
-            });
-        } else {
-          detachedTabDragRef.current = {
-            transferId: payload.transferId,
-            originWindow: payload.detachedDrag.originWindow,
-            grabOffset: payload.detachedDrag.grabOffset,
-            floatingWindow: false,
-            nativeWindowDrag: false,
-          };
-        }
-        startGlobalTabDrag(ownerPayload, JSON.stringify(ownerPayload));
-      }
-      void currentWindowRef.current.setFocus().catch((e) => {
-        console.warn("[omnitab] accepted tab transfer focus failed:", e);
-      });
       void emitTo<TabTransferAccepted>(
         payload.sourceWindow,
         TAB_TRANSFER_ACCEPTED_EVENT,
         { transferId: payload.transferId, targetWindow: currentWindowLabel },
       );
     },
-    [
-      adoptTransferredTab,
-      currentWindowLabel,
-      endGlobalTabDrag,
-      moveTab,
-      startGlobalTabDrag,
-    ],
+    [adoptTransferredTab, currentWindowLabel, endGlobalTabDrag, moveTab],
   );
 
   const detachedWindowGrabOffsetForTab = useCallback(
@@ -1363,14 +1094,7 @@ export default function App() {
         console.warn("[omnitab] tab drag hit-test failed:", e);
         return false;
       }
-      const metricsForDrop =
-        detachedTabDragRef.current?.transferId === payload.transferId &&
-        detachedTabDragRef.current.floatingWindow
-          ? metrics.filter(
-              (metric) => metric.windowLabel !== currentWindowLabel,
-            )
-          : metrics;
-      const target = resolveTabDropTarget(point, metricsForDrop, liveLabels);
+      const target = resolveTabDropTarget(point, metrics, liveLabels);
       if (!target) return false;
       const targetedPayload: TabTransferPayload = {
         ...payload,
@@ -1397,147 +1121,58 @@ export default function App() {
     [acceptTransferredTab, currentWindowLabel],
   );
 
-  const detachTabIntoNewWindow = useCallback(
-    async (
-      payload: TabTransferPayload,
-      options: {
-        continueDrag?: boolean;
-        point?: PhysicalPoint;
-        grabOffset?: { x: number; y: number };
-      } = {},
-    ): Promise<boolean> => {
+  const openDetachedTabWindow = useCallback(
+    async (payload: TabTransferPayload): Promise<boolean> => {
       const pending = pendingTransfersRef.current.get(payload.transferId);
       if (!pending) return true;
-      const cwd = tabPrimaryCwd(pending.payload.tab) ?? inheritedCwdForNewTab();
-      const grabOffset = options.continueDrag
-        ? (options.grabOffset ?? DETACHED_TAB_GRAB_OFFSET)
-        : undefined;
+      const [cursor, grabOffset] = await cursorPosition()
+        .then(async (point) => {
+          const physicalPoint = { x: point.x, y: point.y };
+          return [
+            physicalPoint,
+            await detachedWindowGrabOffsetForTab(
+              payload.sourceTabId,
+              physicalPoint,
+            ),
+          ] as const;
+        })
+        .catch(async () => {
+          const fallbackPoint = await currentWindowRef.current
+            .outerPosition()
+            .then((pos) => ({
+              x: pos.x + DETACHED_TAB_GRAB_OFFSET.x,
+              y: pos.y + DETACHED_TAB_GRAB_OFFSET.y,
+            }))
+            .catch(() => ({ ...DETACHED_TAB_GRAB_OFFSET }));
+          return [fallbackPoint, DETACHED_TAB_GRAB_OFFSET] as const;
+        });
       const nextPayload: TabTransferPayload = {
         ...pending.payload,
+        targetTabId: null,
+        targetEdge: "after",
         replaceTargetTabs: true,
-        detachedDrag:
-          options.continueDrag && grabOffset
-            ? {
-                originWindow: currentWindowLabel,
-                grabOffset,
-                floatingWindow: true,
-              }
-            : undefined,
       };
       let label: string;
       try {
-        const prewarmed =
-          options.continueDrag &&
-          prewarmedDetachedTabDragWindowRef.current?.transferId ===
-            payload.transferId &&
-          !prewarmedDetachedTabDragWindowRef.current.used
-            ? prewarmedDetachedTabDragWindowRef.current
-            : null;
-        if (prewarmed) {
-          prewarmed.used = true;
-          label = prewarmed.label ?? (await prewarmed.promise);
-        } else {
-          label = await openMainWindow(
-            cwd,
-            options.point && grabOffset
-              ? {
-                  position: {
-                    x: Math.round(options.point.x - grabOffset.x),
-                    y: Math.round(options.point.y - grabOffset.y),
-                  },
-                  detachedDrag: true,
-                }
-              : {},
-          );
-        }
-        if (options.point && grabOffset) {
-          await invoke("tab_drag_set_window_position", {
-            label,
-            x: Math.round(options.point.x - grabOffset.x),
-            y: Math.round(options.point.y - grabOffset.y),
-          }).catch(() => {});
-        }
+        label = await openMainWindow(
+          tabPrimaryCwd(pending.payload.tab) ?? inheritedCwdForNewTab(),
+          {
+            position: {
+              x: Math.round(cursor.x - grabOffset.x),
+              y: Math.round(cursor.y - grabOffset.y),
+            },
+            deferShow: true,
+          },
+        );
       } catch (e) {
         console.error("[omnitab] open transfer window failed:", e);
         return false;
       }
-      if (options.continueDrag) {
-        pendingDetachedTabDragWindowRef.current = {
-          transferId: payload.transferId,
-          label,
-        };
-        if (openingDetachedTabDragRef.current === payload.transferId) {
-          openingDetachedTabDragRef.current = null;
-        }
-      }
       pendingNewWindowTransfersRef.current.set(label, nextPayload);
-      if (options.continueDrag) {
-        void emitTo<TabTransferPayload>(label, TAB_TRANSFER_EVENT, nextPayload);
-      }
+      void emitTo<TabTransferPayload>(label, TAB_TRANSFER_EVENT, nextPayload);
       return true;
     },
-    [currentWindowLabel, inheritedCwdForNewTab],
-  );
-
-  const maybeDetachTabIntoDragWindow = useCallback(
-    async (
-      payload: TabTransferPayload,
-      point?: PhysicalPoint,
-    ): Promise<boolean> => {
-      if (detachedTabDragRef.current?.transferId === payload.transferId) {
-        return false;
-      }
-      if (
-        pendingDetachedTabDragWindowRef.current?.transferId ===
-          payload.transferId ||
-        openingDetachedTabDragRef.current === payload.transferId
-      ) {
-        return true;
-      }
-      openingDetachedTabDragRef.current = payload.transferId;
-      const detachPoint: PhysicalPoint =
-        point ??
-        (await cursorPosition().then((cursor) => ({
-          x: cursor.x,
-          y: cursor.y,
-        })));
-      const grabOffset = await detachedWindowGrabOffsetForTab(
-        payload.sourceTabId,
-        detachPoint,
-      );
-      return detachTabIntoNewWindow(payload, {
-        continueDrag: true,
-        point: detachPoint,
-        grabOffset,
-      }).then((opened) => {
-        if (!opened) openingDetachedTabDragRef.current = null;
-        return opened;
-      });
-    },
-    [detachTabIntoNewWindow, detachedWindowGrabOffsetForTab],
-  );
-
-  const moveDetachedDragWindow = useCallback(
-    async (payload: TabTransferPayload): Promise<void> => {
-      const detached = detachedTabDragRef.current;
-      if (
-        !detached ||
-        detached.transferId !== payload.transferId ||
-        !detached.floatingWindow ||
-        detached.nativeWindowDrag
-      ) {
-        return;
-      }
-      const cursor = await cursorPosition();
-      await invoke("tab_drag_set_window_position", {
-        label: currentWindowLabel,
-        x: Math.round(cursor.x - detached.grabOffset.x),
-        y: Math.round(cursor.y - detached.grabOffset.y),
-      }).catch((e) => {
-        console.warn("[omnitab] detached tab drag window move failed:", e);
-      });
-    },
-    [currentWindowLabel],
+    [detachedWindowGrabOffsetForTab, inheritedCwdForNewTab],
   );
 
   const finishTabDragAtPointer = useCallback(
@@ -1557,26 +1192,19 @@ export default function App() {
         return;
       }
 
-      if (detachedTabDragRef.current?.transferId === payload.transferId) {
+      if (tabsRef.current.length <= 1) {
         pendingTransfersRef.current.delete(payload.transferId);
         endGlobalTabDrag(payload.transferId);
         return;
       }
 
-      if (
-        pendingDetachedTabDragWindowRef.current?.transferId ===
-        payload.transferId
-      ) {
-        return;
-      }
-
-      const opened = await detachTabIntoNewWindow(payload);
+      const opened = await openDetachedTabWindow(payload);
       if (!opened) {
         pendingTransfersRef.current.delete(payload.transferId);
         endGlobalTabDrag(payload.transferId);
       }
     },
-    [completeTabDragAtPointer, detachTabIntoNewWindow, endGlobalTabDrag],
+    [completeTabDragAtPointer, endGlobalTabDrag, openDetachedTabWindow],
   );
 
   const handleTabDragEnd = useCallback(
@@ -1598,68 +1226,13 @@ export default function App() {
         return false;
       }
       if (target) {
-        if (
-          detachedTabDragRef.current?.transferId !== payload.transferId &&
-          pendingDetachedTabDragWindowRef.current?.transferId !==
-            payload.transferId
-        ) {
-          moveTab(payload.sourceTabId, target.targetId, target.edge);
-        }
+        moveTab(payload.sourceTabId, target.targetId, target.edge);
         return false;
       }
-      if (tabsRef.current.length <= 1) {
-        openingDetachedTabDragRef.current = null;
-        pendingDetachedTabDragWindowRef.current = null;
-        detachedTabDragRef.current = {
-          transferId: payload.transferId,
-          originWindow: currentWindowLabel,
-          grabOffset: DETACHED_TAB_GRAB_OFFSET,
-          floatingWindow: true,
-          nativeWindowDrag: true,
-        };
-        void cursorPosition()
-          .then((cursor) =>
-            detachedWindowGrabOffsetForTab(payload.sourceTabId, {
-              x: cursor.x,
-              y: cursor.y,
-            }),
-          )
-          .then((grabOffset) => {
-            const current = detachedTabDragRef.current;
-            if (current?.transferId === payload.transferId) {
-              current.grabOffset = grabOffset;
-            }
-          })
-          .catch(() => {});
-        void currentWindowRef.current.startDragging().catch((e) => {
-          const current = detachedTabDragRef.current;
-          if (current?.transferId === payload.transferId) {
-            current.nativeWindowDrag = false;
-          }
-          console.warn("[omnitab] single-tab window drag failed:", e);
-        });
-        void publishTabDragHover(payload);
-        return true;
-      }
-      void cursorPosition()
-        .then((cursor) =>
-          maybeDetachTabIntoDragWindow(payload, {
-            x: cursor.x,
-            y: cursor.y,
-          }),
-        )
-        .catch((e) => {
-          console.warn("[omnitab] tab detach from strip failed:", e);
-        });
-      return true;
+      void publishTabDragHover(payload);
+      return false;
     },
-    [
-      currentWindowLabel,
-      detachedWindowGrabOffsetForTab,
-      maybeDetachTabIntoDragWindow,
-      moveTab,
-      publishTabDragHover,
-    ],
+    [currentWindowLabel, moveTab, publishTabDragHover],
   );
 
   useEffect(() => {
@@ -1675,13 +1248,11 @@ export default function App() {
 
     const onMove = () => {
       const payload = currentPayload();
-      if (!payload || !detachedTabDragRef.current) return;
+      if (!payload) return;
       if (running) return;
       running = true;
       void (async () => {
         try {
-          if (disposed) return;
-          await moveDetachedDragWindow(payload);
           if (disposed) return;
           await publishTabDragHover(payload);
         } finally {
@@ -1692,15 +1263,30 @@ export default function App() {
 
     const onRelease = () => {
       const payload = currentPayload();
-      if (!payload) return;
-      void finishTabDragAtPointer(payload, true);
+      if (payload) {
+        void finishTabDragAtPointer(payload, true);
+        return;
+      }
+      void invoke<string | null>("tab_drag_payload")
+        .then((raw) => {
+          if (!raw) return;
+          const globalPayload = parseTabTransferPayload(raw);
+          if (
+            !globalPayload ||
+            globalPayload.sourceWindow === currentWindowLabel
+          ) {
+            return;
+          }
+          void emitTo<TabDragReleaseSignal>(
+            globalPayload.sourceWindow,
+            TAB_DRAG_RELEASE_EVENT,
+            { transferId: globalPayload.transferId },
+          );
+        })
+        .catch(() => {});
     };
 
-    const unlisteners: Array<() => void> = [];
-    void currentWindowRef.current.onMoved(onMove).then((unlisten) => {
-      if (disposed) unlisten();
-      else unlisteners.push(unlisten);
-    });
+    const hoverTimer = window.setInterval(onMove, 80);
 
     window.addEventListener("pointermove", onMove, true);
     document.addEventListener("pointermove", onMove, true);
@@ -1712,6 +1298,7 @@ export default function App() {
     document.addEventListener("mouseup", onRelease, true);
     return () => {
       disposed = true;
+      window.clearInterval(hoverTimer);
       window.removeEventListener("pointermove", onMove, true);
       document.removeEventListener("pointermove", onMove, true);
       window.removeEventListener("mousemove", onMove, true);
@@ -1720,14 +1307,8 @@ export default function App() {
       document.removeEventListener("pointerup", onRelease, true);
       window.removeEventListener("mouseup", onRelease, true);
       document.removeEventListener("mouseup", onRelease, true);
-      for (const unlisten of unlisteners) unlisten();
     };
-  }, [
-    finishTabDragAtPointer,
-    moveDetachedDragWindow,
-    publishTabDragHover,
-    tabDragActive,
-  ]);
+  }, [finishTabDragAtPointer, publishTabDragHover, tabDragActive]);
 
   useEffect(() => {
     let alive = true;
@@ -1750,25 +1331,13 @@ export default function App() {
           event.payload.transferId,
         );
         if (!pending) return;
-        const detachedHandoff =
-          pendingDetachedTabDragWindowRef.current?.transferId ===
-            event.payload.transferId &&
-          pendingDetachedTabDragWindowRef.current.label ===
-            event.payload.targetWindow;
-        const detachedOwnerHandoff =
-          detachedTabDragRef.current?.transferId === event.payload.transferId;
         pendingTransfersRef.current.delete(event.payload.transferId);
         for (const [label, payload] of pendingNewWindowTransfersRef.current) {
           if (payload.transferId === event.payload.transferId) {
             pendingNewWindowTransfersRef.current.delete(label);
           }
         }
-        if (detachedHandoff || detachedOwnerHandoff) {
-          pendingDetachedTabDragWindowRef.current = null;
-          pendingDetachedTabDragHandoffRef.current = null;
-        } else {
-          endGlobalTabDrag(event.payload.transferId);
-        }
+        endGlobalTabDrag(event.payload.transferId);
         detachTransferredTab(pending.tabId);
       })
       .then((unlisten) => {
@@ -1801,6 +1370,18 @@ export default function App() {
       if (alive) unlisteners.push(unlisten);
       else unlisten();
     });
+    void currentWindowRef.current
+      .listen<TabDragReleaseSignal>(TAB_DRAG_RELEASE_EVENT, (event) => {
+        const pending = pendingTransfersRef.current.get(
+          event.payload.transferId,
+        );
+        if (!pending) return;
+        void finishTabDragAtPointer(pending.payload, true);
+      })
+      .then((unlisten) => {
+        if (alive) unlisteners.push(unlisten);
+        else unlisten();
+      });
     void listen<TabDragSignal>(TAB_DRAG_ENDED_EVENT, (event) => {
       if (activeDragTransferIdRef.current === event.payload.transferId) {
         setGlobalTabDragActive(null, false);
@@ -1823,6 +1404,7 @@ export default function App() {
     currentWindowLabel,
     detachTransferredTab,
     endGlobalTabDrag,
+    finishTabDragAtPointer,
     setGlobalTabDragActive,
   ]);
 

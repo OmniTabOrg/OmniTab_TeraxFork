@@ -1,18 +1,17 @@
-import { Button } from "@/components/ui/button";
-import { WindowControls } from "@/components/WindowControls";
-import { IS_MAC, USE_CUSTOM_WINDOW_CONTROLS } from "@/lib/platform";
-import { TabBar, type Tab } from "@/modules/tabs";
-import { NotificationBell } from "@/modules/agents";
-import { Settings01Icon } from "@/components/icons";
-import { AppIcon } from "@/components/icons";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
+  type PointerEvent,
   useCallback,
   useEffect,
   useRef,
   useState,
-  type PointerEvent,
 } from "react";
+import { AppIcon, Settings01Icon } from "@/components/icons";
+import { Button } from "@/components/ui/button";
+import { WindowControls } from "@/components/WindowControls";
+import { IS_MAC, USE_CUSTOM_WINDOW_CONTROLS } from "@/lib/platform";
+import { NotificationBell } from "@/modules/agents";
+import { type Tab, TabBar } from "@/modules/tabs";
 
 type Props = {
   tabs: Tab[];
@@ -48,6 +47,15 @@ type Props = {
 };
 
 const COMPACT_WIDTH = 720;
+const WINDOW_CHROME_INTERACTIVE_SELECTOR =
+  "button, input, textarea, select, a, [role='tab'], [data-tab-id], [data-no-drag]";
+
+function isWindowChromeInteractiveTarget(target: EventTarget | null): boolean {
+  return (
+    target instanceof HTMLElement &&
+    !!target.closest(WINDOW_CHROME_INTERACTIVE_SELECTOR)
+  );
+}
 
 export function Header({
   tabs,
@@ -74,19 +82,22 @@ export function Header({
   const startWindowDrag = useCallback(
     (e: PointerEvent<HTMLElement>) => {
       if (tabDragActive || e.button !== 0) return;
-      const target = e.target as HTMLElement | null;
-      if (
-        target?.closest(
-          "button, input, textarea, select, a, [role='tab'], [data-tab-id]",
-        )
-      ) {
+      if (isWindowChromeInteractiveTarget(e.target)) {
         return;
       }
-      void getCurrentWindow()
-        .startDragging()
-        .catch((err) => {
-          console.warn("[omnitab] window drag failed:", err);
-        });
+      const window = getCurrentWindow();
+      if (e.detail > 1) {
+        e.preventDefault();
+        if (e.detail === 2) {
+          void window.toggleMaximize().catch((err) => {
+            console.warn("[omnitab] window maximize toggle failed:", err);
+          });
+        }
+        return;
+      }
+      void window.startDragging().catch((err) => {
+        console.warn("[omnitab] window drag failed:", err);
+      });
     },
     [tabDragActive],
   );
@@ -140,8 +151,6 @@ export function Header({
 
       {!IS_MAC && <span className="mx-1 h-5 w-px shrink-0 bg-border" />}
 
-      {IS_MAC && <span className="mr-1 h-full w-px shrink-0 bg-border" />}
-
       <div
         className="flex h-full min-w-0 flex-1 items-center"
         data-omnitab-tab-drop-zone
@@ -186,12 +195,7 @@ export function Header({
 
       {!IS_MAC && settingsButton}
 
-      {USE_CUSTOM_WINDOW_CONTROLS && (
-        <>
-          <span className="ml-1 h-5 w-px shrink-0 bg-border" />
-          <WindowControls />
-        </>
-      )}
+      {USE_CUSTOM_WINDOW_CONTROLS && <WindowControls />}
     </div>
   );
 }

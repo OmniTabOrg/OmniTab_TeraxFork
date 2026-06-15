@@ -14,7 +14,6 @@ import { USE_CUSTOM_WINDOW_CONTROLS } from "./lib/platform";
 
 const currentWindow = getCurrentWindow();
 const params = new URLSearchParams(window.location.search);
-const isDetachedDragWindow = params.get("detachedDrag") === "1";
 const deferShow = params.get("deferShow") === "1";
 
 if (USE_CUSTOM_WINDOW_CONTROLS) {
@@ -40,7 +39,7 @@ const showWindow = () => {
   currentWindow.show().catch((e) => console.error("window.show failed:", e));
 };
 if (!deferShow) {
-  setTimeout(showWindow, isDetachedDragWindow ? 0 : 50);
+  setTimeout(showWindow, 50);
   // Safety net: if the first show somehow fails to take effect, force again.
-  setTimeout(showWindow, isDetachedDragWindow ? 120 : 500);
+  setTimeout(showWindow, 500);
 }

@@ -8,6 +8,7 @@ export const TAB_TRANSFER_ACCEPTED_EVENT = "omnitab:tab-transfer-accepted";
 export const TAB_DRAG_STARTED_EVENT = "omnitab:tab-drag-started";
 export const TAB_DRAG_ENDED_EVENT = "omnitab:tab-drag-ended";
 export const TAB_DRAG_HOVER_EVENT = "omnitab:tab-drag-hover";
+export const TAB_DRAG_RELEASE_EVENT = "omnitab:tab-drag-release";
 
 export type TabDropEdge = "before" | "after";
 
@@ -20,11 +21,6 @@ export type TabTransferPayload = {
   targetTabId?: number | null;
   targetEdge?: TabDropEdge;
   replaceTargetTabs?: boolean;
-  detachedDrag?: {
-    originWindow: string;
-    grabOffset: { x: number; y: number };
-    floatingWindow?: boolean;
-  };
 };
 
 export type TabTransferAccepted = {
@@ -39,6 +35,10 @@ export type TabTransferReady = {
 export type TabDragSignal = {
   transferId: string;
   sourceWindow: string;
+};
+
+export type TabDragReleaseSignal = {
+  transferId: string;
 };
 
 export type TabDragHoverSignal = {

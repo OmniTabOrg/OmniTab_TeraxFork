@@ -115,20 +115,6 @@ fn tab_drag_metrics(state: State<'_, TabDragState>) -> Vec<serde_json::Value> {
 }
 
 #[tauri::command]
-fn tab_drag_set_window_position(
-    app: tauri::AppHandle,
-    label: String,
-    x: i32,
-    y: i32,
-) -> Result<(), String> {
-    let window = app
-        .get_webview_window(&label)
-        .ok_or_else(|| format!("window not found: {label}"))?;
-    window
-        .set_position(PhysicalPosition::new(x, y))
-        .map_err(|e| e.to_string())
-}
-
 fn parse_launch_dir() -> Option<String> {
     for arg in std::env::args().skip(1) {
         if arg.starts_with('-') {
@@ -189,7 +175,6 @@ async fn open_main_window(
     registry: State<'_, workspace::WorkspaceRegistry>,
     cwd: Option<String>,
     position: Option<WindowPosition>,
-    detached_drag: Option<bool>,
     defer_show: Option<bool>,
 ) -> Result<String, String> {
     let cwd = cwd.map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
@@ -202,9 +187,6 @@ async fn open_main_window(
         Some(cwd) => format!("index.html?launchCwd={}", encode_url_component(&cwd)),
         None => "index.html".to_string(),
     };
-    if detached_drag.unwrap_or(false) {
-        append_query_param(&mut url, "detachedDrag", "1");
-    }
     if defer_show.unwrap_or(false) {
         append_query_param(&mut url, "deferShow", "1");
     }
@@ -455,7 +437,6 @@ pub fn run() {
             tab_drag_set_metrics,
             tab_drag_clear_metrics,
             tab_drag_metrics,
-            tab_drag_set_window_position,
             open_main_window,
             open_settings_window,
             browser::browser_navigate,
